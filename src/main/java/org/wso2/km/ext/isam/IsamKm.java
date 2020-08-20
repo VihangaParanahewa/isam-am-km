@@ -50,6 +50,7 @@ import org.wso2.carbon.apimgt.impl.dao.ApiMgtDAO;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 
 import static org.wso2.km.ext.isam.Constants.HTTP_FORBIDDEN;
 import static org.wso2.km.ext.isam.Constants.HTTP_OK;
@@ -105,23 +106,38 @@ public class IsamKm extends AMDefaultKeyManagerImpl {
     public OAuthApplicationInfo createApplication(OAuthAppRequest oauthAppRequest) throws APIManagementException {
         OAuthApplicationInfo info = oauthAppRequest.getOAuthApplicationInfo();
         Application application = getApplication(info);
-        OAuthApplicationInfo result = super.createApplication(oauthAppRequest);
-        try {
-            createApplication(application);
-        } catch (Exception e) {
-            // ToDo: Check this.
-            super.deleteApplication(info.getClientId());
-            throw e;
+        if (isISAM(application)) {
+            JSONObject response = createApplication(application).getResponse();
+            OAuthApplicationInfo applicationInfo = new OAuthApplicationInfo();
+            try {
+                applicationInfo.setClientId(response.getString("client_id"));
+                applicationInfo.setClientSecret(response.getString("client_secret"));
+                applicationInfo.setCallBackURL(response.getJSONArray("redirect_uris").getString(0));
+                return applicationInfo;
+            } catch (JSONException e) {
+                throw new APIManagementException("Unable to retrieve information from the client creation response.",
+                                                 e);
+            }
+        } else {
+            return super.createApplication(oauthAppRequest);
         }
-        return result;
+    }
+
+    private boolean isISAM(Application application) {
+        Map<String, String> attributes = application.getApplicationAttributes();
+        String idp = attributes.get("IDP");
+        return idp.equalsIgnoreCase("isam");
     }
 
     @Override
     public void deleteApplication(String consumerKey) throws APIManagementException {
         OAuthApplicationInfo info = retrieveApplication(consumerKey);
         Application application = getApplication(info);
-        deleteApplication(application);
-        super.deleteApplication(consumerKey);
+        if (isISAM(application)) {
+            deleteApplication(application);
+        } else {
+            super.deleteApplication(consumerKey);
+        }
     }
 
     @Override
@@ -133,11 +149,17 @@ public class IsamKm extends AMDefaultKeyManagerImpl {
                 JSONObject response = introspectionResponse.getResponse();
                 AccessTokenInfo tokenInfo = new AccessTokenInfo();
                 try {
-                    tokenInfo.setTokenValid(response.getBoolean(Constants.ACTIVE));
-                    tokenInfo.setValidityPeriod(response.getLong(Constants.EXPIRY) * 1000L);
-                    tokenInfo.setScope(response.getString(Constants.SCOPE).split(" "));
-                    tokenInfo.setConsumerKey(response.getString(Constants.CLIENT_ID));
+                    boolean isActive = response.getBoolean(Constants.ACTIVE);
+                    tokenInfo.setTokenValid(isActive);
+                    if (isActive) {
+                        tokenInfo.setValidityPeriod(
+                                response.getLong(Constants.EXPIRY) - response.getLong(Constants.TOKEN_ISSUED_TIME));
+                        tokenInfo.setScope(response.getString(Constants.SCOPE).split(" "));
+                        tokenInfo.setConsumerKey(response.getString(Constants.CLIENT_ID));
+                        tokenInfo.setIssuedTime(response.getLong(Constants.TOKEN_ISSUED_TIME));
+                        tokenInfo.setEndUserName(response.getString(Constants.USERNAME));
 //                    tokenInfo.addParameter("param1", "para1value");
+                    }
                 } catch (JSONException e) {
                     throw new APIManagementException(e);
                 }
@@ -175,7 +197,7 @@ public class IsamKm extends AMDefaultKeyManagerImpl {
         }
     }
 
-    private void createApplication(Application application) throws APIManagementException {
+    private OAuthResponse createApplication(Application application) throws APIManagementException {
         try {
             if (accessToken == null) {
                 accessToken = getAccessToken();
@@ -185,46 +207,48 @@ public class IsamKm extends AMDefaultKeyManagerImpl {
             if (response.getStatusCode() == HTTP_UNAUTHORIZED || response.getStatusCode() == HTTP_FORBIDDEN) {
                 accessToken = getAccessToken();
                 post.releaseConnection();
+                post.setHeader(Constants.AUTH_HEADER, getAuthorizationHeaderForAccessToken());
                 response = executeHttpMethod(post);
             }
             if (response.getStatusCode() != HTTP_OK) {
                 throw new APIManagementException("Could not create application successfully in the ISAM. ISAM " +
-                                                         "respond with " + response.getStatusCode());
+                                                         "respond with " + response.getStatusCode() + ", Error: " +
+                                                         (response.getResponse().has("error") ?
+                                                                 response.getResponse().getString("error") : ""));
             }
+            return response;
         } catch (JSONException e) {
-            throw new APIManagementException("Could not build the create application request payload", e);
+            throw new APIManagementException("Could not create the application.", e);
         }
     }
 
     private void deleteApplication(Application application) throws APIManagementException {
-        if (accessToken == null) {
-            accessToken = getAccessToken();
-        }
-        HttpDelete delete = getDeleteApplicationDeleteMethod(application);
-        OAuthResponse response = executeHttpMethod(delete);
-        if (response.getStatusCode() == HTTP_UNAUTHORIZED || response.getStatusCode() == HTTP_FORBIDDEN) {
-            accessToken = getAccessToken();
-            delete.releaseConnection();
-            response = executeHttpMethod(delete);
-        }
-        if (response.getStatusCode() != HTTP_OK) {
-            throw new APIManagementException(
-                    "Could not delete the application from ISAM. ISAM respond with  " + response.getStatusCode());
+        try {
+            if (accessToken == null) {
+                accessToken = getAccessToken();
+            }
+            HttpDelete delete = getDeleteApplicationDeleteMethod(application);
+            OAuthResponse response = executeHttpMethod(delete);
+            if (response.getStatusCode() == HTTP_UNAUTHORIZED || response.getStatusCode() == HTTP_FORBIDDEN) {
+                accessToken = getAccessToken();
+                delete.releaseConnection();
+                delete.setHeader(Constants.AUTH_HEADER, getAuthorizationHeaderForAccessToken());
+                response = executeHttpMethod(delete);
+            }
+            if (response.getStatusCode() != HTTP_OK) {
+                throw new APIManagementException(
+                        "Could not delete the application from ISAM. ISAM respond with  " + response.getStatusCode() +
+                                ", Error: " + (response.getResponse().has("error") ?
+                                response.getResponse().getString("error") : ""));
+            }
+        } catch (JSONException e) {
+            throw new APIManagementException("Could not delete the application.", e);
         }
     }
 
     private OAuthResponse sendIntrospection(String token) throws APIManagementException {
-        if (accessToken == null) {
-            accessToken = getAccessToken();
-        }
         HttpPost post = getIntrospectionPostMethod(token);
-        OAuthResponse response = executeHttpMethod(post);
-        if (response.getStatusCode() == HTTP_UNAUTHORIZED || response.getStatusCode() == HTTP_FORBIDDEN) {
-            accessToken = getAccessToken();
-            post.releaseConnection();
-            response = executeHttpMethod(post);
-        }
-        return response;
+        return executeHttpMethod(post);
     }
 
     private String getAccessToken() throws APIManagementException {
@@ -276,10 +300,11 @@ public class IsamKm extends AMDefaultKeyManagerImpl {
     }
 
     private UrlEncodedFormEntity getAccessTokenPayloadEntity() {
-        List<BasicNameValuePair> parametersBody = new ArrayList<>(5);
+        List<BasicNameValuePair> parametersBody = new ArrayList<>(7);
         parametersBody.add(new BasicNameValuePair(Constants.GRANT_TYPE, Constants.GRANT_CLIENT_CREDENTIALS));
         parametersBody.add(new BasicNameValuePair(Constants.CLIENT_ID, clientId));
         parametersBody.add(new BasicNameValuePair(Constants.CLIENT_SECRET, clientSecret));
+        parametersBody.add(new BasicNameValuePair(Constants.TOKEN_TYPE_HINT, Constants.ACCESS_TOKEN));
         UrlEncodedFormEntity entity = new UrlEncodedFormEntity(parametersBody, StandardCharsets.UTF_8);
         entity.setContentType(Constants.JSON_CONTENT);
         return entity;
@@ -287,13 +312,14 @@ public class IsamKm extends AMDefaultKeyManagerImpl {
 
     private HttpPost getIntrospectionPostMethod(String token) {
         HttpPost post = new HttpPost(introspectionEndpoint);
-        post.addHeader(Constants.AUTH_HEADER, getAuthorizationHeaderForAccessToken());
         post.setEntity(getIntrospectionPayloadEntity(token));
         return post;
     }
 
     private UrlEncodedFormEntity getIntrospectionPayloadEntity(String token) {
-        List<BasicNameValuePair> parametersBody = new ArrayList<>(3);
+        List<BasicNameValuePair> parametersBody = new ArrayList<>(5);
+        parametersBody.add(new BasicNameValuePair(Constants.CLIENT_ID, clientId));
+        parametersBody.add(new BasicNameValuePair(Constants.CLIENT_SECRET, clientSecret));
         parametersBody.add(new BasicNameValuePair(Constants.TOKEN, token));
         UrlEncodedFormEntity entity = new UrlEncodedFormEntity(parametersBody, StandardCharsets.UTF_8);
         entity.setContentType(Constants.JSON_CONTENT);
