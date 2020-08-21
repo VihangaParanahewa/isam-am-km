@@ -22,7 +22,7 @@ package org.wso2.km.ext.isam;
 
 public final class Constants {
 
-    public static final String ISAM_AUTH_ENDPOINT_URL_CONTEXT = "/sps/oauth/oauth20";
+//    public static final String ISAM_AUTH_ENDPOINT_URL_CONTEXT = "/sps/oauth/oauth20";
 
     public static final String CONFIG_ISAM_ENDPOINT_URL = "IsamKm.ServerURL";
     public static final String CONFIG_TOKEN_LENGTH = "IsamKm.TokenLength";
@@ -52,6 +52,9 @@ public final class Constants {
     public static final String HEADER_ACCEPT = "Accept";
 
     public static final int HTTP_OK = 200;
+    public static final int HTTP_NO_CONTENT = 204;
     public static final int HTTP_FORBIDDEN = 403;
     public static final int HTTP_UNAUTHORIZED = 401;
+
+    public static final String ERROR_DESCRIPTION = "error_description";
 }
