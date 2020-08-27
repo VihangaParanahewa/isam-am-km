@@ -56,4 +56,5 @@ public final class Constants {
     public static final int HTTP_UNAUTHORIZED = 401;
 
     public static final String ERROR_DESCRIPTION = "error_description";
+    public static final String ISAM = "isIsam";
 }
