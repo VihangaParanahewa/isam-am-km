@@ -50,6 +50,8 @@ import org.wso2.carbon.apimgt.impl.dao.ApiMgtDAO;
 import org.wso2.carbon.apimgt.impl.utils.APIMgtDBUtil;
 
 import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.List;
@@ -129,9 +131,15 @@ public class IsamKm extends AMDefaultKeyManagerImpl {
         Application application = getApplication(info);
         if (isISAM(application)) {
             JSONObject response = createApplication(application, info).getResponse();
-            OAuthApplicationInfo applicationInfo = new OAuthApplicationInfo();
-            applicationInfo = buildFromJSON(applicationInfo, info.getJsonString());
             try {
+                OAuthApplicationInfo applicationInfo = new OAuthApplicationInfo();
+                applicationInfo.setClientName(info.getClientName());
+                applicationInfo.addParameter(ApplicationConstants.OAUTH_CLIENT_NAME, info.getClientName());
+                applicationInfo.setClientId(response.getString(CLIENT_ID));
+                applicationInfo.addParameter(ApplicationConstants.OAUTH_CLIENT_ID, response.getString(CLIENT_ID));
+                applicationInfo.setClientSecret(response.getString(CLIENT_SECRET));
+                applicationInfo.addParameter(ApplicationConstants.OAUTH_CLIENT_SECRET,
+                                             response.getString(CLIENT_SECRET));
                 String tokenScope = (String) info.getParameter("tokenScope");
                 String[] tokenScopes = new String[]{tokenScope};
                 applicationInfo.addParameter("tokenScope", tokenScopes);
@@ -140,8 +148,6 @@ public class IsamKm extends AMDefaultKeyManagerImpl {
                     applicationInfo.addParameter("grant_types", ((String) jsonObject.get("grant_types")).
                             replace(",", " "));
                 }
-                applicationInfo.setClientId(response.getString(CLIENT_ID));
-                applicationInfo.setClientSecret(response.getString(CLIENT_SECRET));
                 applicationInfo.setCallBackURL(response.getJSONArray("redirect_uris").getString(0));
                 applicationInfo.addParameter(ISAM, true);
                 return applicationInfo;
@@ -164,56 +170,40 @@ public class IsamKm extends AMDefaultKeyManagerImpl {
 
     @Override
     public void deleteApplication(String consumerKey) throws APIManagementException {
-//        Map<String, String> attributes = getAttributesByClientId(consumerKey);
-//        System.out.println("attributes.get(\"IDP\") = " + attributes.get("IDP"));
-        if ("isam".equalsIgnoreCase("isam")) {
+        String idp = getIDPNameByClientId(consumerKey);
+        if ("isam".equalsIgnoreCase(idp)) {
             deleteISAMApplication(consumerKey);
         } else {
             super.deleteApplication(consumerKey);
         }
     }
 
-//    private String getIDPNameByClientId(String clientId) throws APIManagementException {
-//        Connection connection = null;
-//        PreparedStatement prepStmt = null;
-//        ResultSet rs = null;
-//        try {
-//            connection = APIMgtDBUtil.getConnection();
-//            String query =
-//                    "SELECT attribute.VALUE FROM AM_APPLICATION_KEY_MAPPING AM_APP_MAP, " +
-//                            "AM_APPLICATION APP, AM_APPLICATION_ATTRIBUTES attribute " +
-//                            "WHERE AM_APP_MAP.CONSUMER_KEY = ? AND APP.APPLICATION_ID = " +
-//                            "AM_APP_MAP.APPLICATION_ID AND attribute.APPLICATION_ID = APP.APPLICATION_ID";
-//            System.out.println("query = " + query);
-//            prepStmt = connection.prepareStatement(query);
-//            prepStmt.setString(1, clientId);
-//            rs = prepStmt.executeQuery();
-//            if (rs.next()) {
-//                System.out.println("rs.getString(\"VALUE\") = " + rs.getString("VALUE"));
-//            }
-//            System.out.println("Done");
-//        } catch (SQLException e) {
-//            this.handleException("Error while obtaining details of the Application foe client id " + clientId, e);
-//        } finally {
-//            APIMgtDBUtil.closeAllConnections(prepStmt, connection, rs);
-//        }
-//        return "isam";
-//    }
-
-    private Map<String, String> getAttributesByClientId(String clientId) throws APIManagementException {
-        ApiMgtDAO dao = ApiMgtDAO.getInstance();
+    private String getIDPNameByClientId(String clientId) throws APIManagementException {
         Connection connection = null;
+        PreparedStatement prepStmt = null;
+        ResultSet rs = null;
         try {
             connection = APIMgtDBUtil.getConnection();
-            Application application = dao.getApplicationByClientId(clientId);
-            return dao.getApplicationAttributes(connection, application.getId());
+            String query =
+                    "SELECT ATTRIBUTE.VALUE " +
+                            "FROM AM_APPLICATION_KEY_MAPPING AM_APP_MAP, AM_APPLICATION_ATTRIBUTES ATTRIBUTE " +
+                            "WHERE AM_APP_MAP.CONSUMER_KEY = ? AND ATTRIBUTE.NAME = ? AND " +
+                            "AM_APP_MAP.APPLICATION_ID = ATTRIBUTE.APPLICATION_ID";
+            prepStmt = connection.prepareStatement(query);
+            prepStmt.setString(1, clientId);
+            prepStmt.setString(2, "IDP");
+            rs = prepStmt.executeQuery();
+            if (rs.next()) {
+                return rs.getString("VALUE");
+            }
         } catch (SQLException e) {
-            throw new APIManagementException(e);
+            throw new APIManagementException(
+                    "Error while obtaining details of the Application for client id " + clientId, e);
         } finally {
-            APIMgtDBUtil.closeAllConnections(null, connection, null);
+            APIMgtDBUtil.closeAllConnections(prepStmt, connection, rs);
         }
+        return null;
     }
-
 
     @Override
     public AccessTokenInfo getTokenMetaData(String accessToken) throws APIManagementException {
@@ -279,12 +269,11 @@ public class IsamKm extends AMDefaultKeyManagerImpl {
     public AccessTokenRequest buildAccessTokenRequestFromOAuthApp(OAuthApplicationInfo oAuthApplication,
                                                                   AccessTokenRequest tokenRequest)
             throws APIManagementException {
-        AccessTokenRequest accessTokenRequest = super.buildAccessTokenRequestFromOAuthApp(oAuthApplication,
-                                                                                          tokenRequest);
+        AccessTokenRequest req = super.buildAccessTokenRequestFromOAuthApp(oAuthApplication, tokenRequest);
         if (Boolean.TRUE.equals(oAuthApplication.getParameter(ISAM))) {
-            accessTokenRequest.addRequestParam(ISAM, true);
+            req.addRequestParam(ISAM, true);
         }
-        return accessTokenRequest;
+        return req;
     }
 
     private Application getApplication(OAuthApplicationInfo oAuthApplicationInfo)
