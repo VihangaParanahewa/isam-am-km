@@ -21,12 +21,11 @@
 package org.wso2.km.ext.isam;
 
 import org.apache.commons.lang.StringUtils;
-import org.apache.commons.logging.Log;
-import org.apache.commons.logging.LogFactory;
 import org.apache.http.HttpEntity;
 import org.apache.http.client.entity.UrlEncodedFormEntity;
 import org.apache.http.client.methods.CloseableHttpResponse;
 import org.apache.http.client.methods.HttpDelete;
+import org.apache.http.client.methods.HttpGet;
 import org.apache.http.client.methods.HttpPost;
 import org.apache.http.client.methods.HttpRequestBase;
 import org.apache.http.entity.StringEntity;
@@ -62,25 +61,30 @@ import static org.wso2.km.ext.isam.Constants.AUTH_HEADER;
 import static org.wso2.km.ext.isam.Constants.CLIENT_ID;
 import static org.wso2.km.ext.isam.Constants.CLIENT_SECRET;
 import static org.wso2.km.ext.isam.Constants.ERROR_DESCRIPTION;
+import static org.wso2.km.ext.isam.Constants.GRANT_TYPES;
 import static org.wso2.km.ext.isam.Constants.HTTP_FORBIDDEN;
 import static org.wso2.km.ext.isam.Constants.HTTP_NO_CONTENT;
 import static org.wso2.km.ext.isam.Constants.HTTP_OK;
 import static org.wso2.km.ext.isam.Constants.HTTP_UNAUTHORIZED;
 import static org.wso2.km.ext.isam.Constants.ISAM;
 import static org.wso2.km.ext.isam.Constants.JSON_CONTENT;
+import static org.wso2.km.ext.isam.Constants.REDIRECT_URIS;
+import static org.wso2.km.ext.isam.Constants.TOKEN_SCOPE;
 
 public class IsamKm extends AMDefaultKeyManagerImpl {
 
-    private static final Log log = LogFactory.getLog(IsamKm.class);
     private String clientId;
     private String clientSecret;
     private int tokenLength;
     private String accessToken = null;
+    private BasicNameValuePair clientIdPair;
+    private BasicNameValuePair clientSecretPair;
 
     private String tokenEndpoint;
     private String introspectionEndpoint;
     private String clientRegisterEndpoint;
     private String schema;
+
 
     @Override
     public void loadConfiguration(KeyManagerConfiguration configuration) throws APIManagementException {
@@ -118,6 +122,8 @@ public class IsamKm extends AMDefaultKeyManagerImpl {
                 throw new APIManagementException(
                         "[ISAM KM] Unable to find the <Schema> property under <IsamKm> configuration.");
             }
+            clientIdPair = new BasicNameValuePair(CLIENT_ID, clientId);
+            clientSecretPair = new BasicNameValuePair(CLIENT_SECRET, clientSecret);
         }
         super.loadConfiguration(configuration);
         System.setProperty("org.apache.commons.logging.Log", "org.apache.commons.logging.impl.SimpleLog");
@@ -130,79 +136,73 @@ public class IsamKm extends AMDefaultKeyManagerImpl {
         OAuthApplicationInfo info = oauthAppRequest.getOAuthApplicationInfo();
         Application application = getApplication(info);
         if (isISAM(application)) {
-            JSONObject response = createApplication(application, info).getResponse();
+            JSONObject res = createApplication(application, info).getResponse();
             try {
                 OAuthApplicationInfo applicationInfo = new OAuthApplicationInfo();
                 applicationInfo.setClientName(info.getClientName());
                 applicationInfo.addParameter(ApplicationConstants.OAUTH_CLIENT_NAME, info.getClientName());
-                applicationInfo.setClientId(response.getString(CLIENT_ID));
-                applicationInfo.addParameter(ApplicationConstants.OAUTH_CLIENT_ID, response.getString(CLIENT_ID));
-                applicationInfo.setClientSecret(response.getString(CLIENT_SECRET));
-                applicationInfo.addParameter(ApplicationConstants.OAUTH_CLIENT_SECRET,
-                                             response.getString(CLIENT_SECRET));
-                String tokenScope = (String) info.getParameter("tokenScope");
+                applicationInfo.setClientId(res.getString(CLIENT_ID));
+                applicationInfo.addParameter(ApplicationConstants.OAUTH_CLIENT_ID, res.getString(CLIENT_ID));
+                applicationInfo.setClientSecret(res.getString(CLIENT_SECRET));
+                applicationInfo.addParameter(ApplicationConstants.OAUTH_CLIENT_SECRET, res.getString(CLIENT_SECRET));
+                String tokenScope = (String) info.getParameter(TOKEN_SCOPE);
                 String[] tokenScopes = new String[]{tokenScope};
-                applicationInfo.addParameter("tokenScope", tokenScopes);
+                applicationInfo.addParameter(TOKEN_SCOPE, tokenScopes);
                 JSONObject jsonObject = new JSONObject(info.getJsonString());
-                if (jsonObject.has("grant_types")) {
-                    applicationInfo.addParameter("grant_types", ((String) jsonObject.get("grant_types")).
+                if (jsonObject.has(GRANT_TYPES)) {
+                    applicationInfo.addParameter(GRANT_TYPES, ((String) jsonObject.get(GRANT_TYPES)).
                             replace(",", " "));
                 }
-                applicationInfo.setCallBackURL(response.getJSONArray("redirect_uris").getString(0));
+                if (info.getParameter(REDIRECT_URIS) != null) {
+                    applicationInfo.setCallBackURL(String.valueOf(info.getParameter(REDIRECT_URIS)));
+                }
                 applicationInfo.addParameter(ISAM, true);
                 return applicationInfo;
             } catch (JSONException e) {
-                throw new APIManagementException("Unable to retrieve information from the client creation response.",
-                                                 e);
+                throw new APIManagementException("Unable to retrieve information from the client creation res.", e);
             }
         } else {
             return super.createApplication(oauthAppRequest);
         }
     }
 
-    private boolean isISAM(Application application) {
-        if (application != null) {
-            String idp = application.getApplicationAttributes().get("IDP");
-            return "isam".equalsIgnoreCase(idp);
+    @Override
+    public OAuthApplicationInfo retrieveApplication(String consumerKey) throws APIManagementException {
+        String idp = getIDPNameByClientId(consumerKey);
+        if (ISAM.equalsIgnoreCase(idp)) {
+            try {
+                JSONObject res = getISAMApplication(consumerKey).getResponse();
+                OAuthApplicationInfo applicationInfo = new OAuthApplicationInfo();
+                applicationInfo.setClientId(res.getString(CLIENT_ID));
+                applicationInfo.setClientSecret(res.getString(CLIENT_SECRET));
+                applicationInfo.setCallBackURL(res.getJSONArray(REDIRECT_URIS).getString(0));
+                JSONArray redirectUris = res.getJSONArray(REDIRECT_URIS);
+                StringBuilder uris = new StringBuilder();
+                for (int i = 0; i < redirectUris.length(); i++) {
+                    uris.append(redirectUris.getString(i));
+                    uris.append(",");
+                }
+                if (uris.length() > 0) {
+                    uris.deleteCharAt(uris.length() - 1);
+                }
+                applicationInfo.addParameter(REDIRECT_URIS, uris.toString());
+                return applicationInfo;
+            } catch (JSONException e) {
+                throw new APIManagementException("Unable to retrieve information from the client details response.", e);
+            }
+        } else {
+            return super.retrieveApplication(consumerKey);
         }
-        return false;
     }
 
     @Override
     public void deleteApplication(String consumerKey) throws APIManagementException {
         String idp = getIDPNameByClientId(consumerKey);
-        if ("isam".equalsIgnoreCase(idp)) {
+        if (ISAM.equalsIgnoreCase(idp)) {
             deleteISAMApplication(consumerKey);
         } else {
             super.deleteApplication(consumerKey);
         }
-    }
-
-    private String getIDPNameByClientId(String clientId) throws APIManagementException {
-        Connection connection = null;
-        PreparedStatement prepStmt = null;
-        ResultSet rs = null;
-        try {
-            connection = APIMgtDBUtil.getConnection();
-            String query =
-                    "SELECT ATTRIBUTE.VALUE " +
-                            "FROM AM_APPLICATION_KEY_MAPPING AM_APP_MAP, AM_APPLICATION_ATTRIBUTES ATTRIBUTE " +
-                            "WHERE AM_APP_MAP.CONSUMER_KEY = ? AND ATTRIBUTE.NAME = ? AND " +
-                            "AM_APP_MAP.APPLICATION_ID = ATTRIBUTE.APPLICATION_ID";
-            prepStmt = connection.prepareStatement(query);
-            prepStmt.setString(1, clientId);
-            prepStmt.setString(2, "IDP");
-            rs = prepStmt.executeQuery();
-            if (rs.next()) {
-                return rs.getString("VALUE");
-            }
-        } catch (SQLException e) {
-            throw new APIManagementException(
-                    "Error while obtaining details of the Application for client id " + clientId, e);
-        } finally {
-            APIMgtDBUtil.closeAllConnections(prepStmt, connection, rs);
-        }
-        return null;
     }
 
     @Override
@@ -276,8 +276,7 @@ public class IsamKm extends AMDefaultKeyManagerImpl {
         return req;
     }
 
-    private Application getApplication(OAuthApplicationInfo oAuthApplicationInfo)
-            throws APIManagementException {
+    private Application getApplication(OAuthApplicationInfo oAuthApplicationInfo) throws APIManagementException {
         ApiMgtDAO dao = ApiMgtDAO.getInstance();
         String clientId = oAuthApplicationInfo.getClientName();
         String userId = (String) oAuthApplicationInfo.getParameter(ApplicationConstants.OAUTH_CLIENT_USERNAME);
@@ -358,6 +357,31 @@ public class IsamKm extends AMDefaultKeyManagerImpl {
         return executeHttpMethod(post);
     }
 
+    private OAuthResponse getISAMApplication(String clientId) throws APIManagementException {
+        try {
+            if (accessToken == null) {
+                accessToken = getAccessToken(this.clientId, clientSecret).getString(Constants.ACCESS_TOKEN);
+            }
+            HttpGet get = getRetrieveApplicationGetMethod(clientId);
+            OAuthResponse res = executeHttpMethod(get);
+            if (res.getStatusCode() == HTTP_UNAUTHORIZED || res.getStatusCode() == HTTP_FORBIDDEN) {
+                accessToken = getAccessToken(this.clientId, clientSecret).getString(Constants.ACCESS_TOKEN);
+                get.releaseConnection();
+                get.setHeader(AUTH_HEADER, getAuthorizationHeaderForAccessToken());
+                res = executeHttpMethod(get);
+            }
+            if (res.getStatusCode() != HTTP_OK) {
+                throw new APIManagementException(
+                        "Could not retrieve application details from the ISAM. ISAM respond with " +
+                                res.getStatusCode() + ", Error: " + (res.getResponse().has(ERROR_DESCRIPTION) ?
+                                res.getResponse().getString(ERROR_DESCRIPTION) : ""));
+            }
+            return res;
+        } catch (JSONException e) {
+            throw new APIManagementException("Could not retrieve application details.", e);
+        }
+    }
+
     private JSONObject getAccessToken(String clientId, String clientSecret) throws APIManagementException {
         try {
             HttpPost post = getAccessTokenPostMethod(clientId, clientSecret);
@@ -375,28 +399,13 @@ public class IsamKm extends AMDefaultKeyManagerImpl {
         }
     }
 
-    private HttpPost getCreateApplicationPostMethod(Application application,
-                                                    OAuthApplicationInfo info)
+    private HttpPost getCreateApplicationPostMethod(Application application, OAuthApplicationInfo info)
             throws JSONException {
         String url = clientRegisterEndpoint + "/" + schema;
         HttpPost post = new HttpPost(url);
         post.addHeader(AUTH_HEADER, getAuthorizationHeaderForAccessToken());
         post.setEntity(getCreateApplicationPayloadEntity(application, info));
         return post;
-    }
-
-    private StringEntity getCreateApplicationPayloadEntity(Application application,
-                                                           OAuthApplicationInfo info) throws JSONException {
-        JSONObject jsonPayload = new JSONObject();
-        JSONArray redirectsUris = new JSONArray();
-        redirectsUris.put(application.getCallbackUrl());
-        for (Map.Entry<String, String> entry : application.getApplicationAttributes().entrySet()) {
-            jsonPayload.put(entry.getKey(), entry.getValue());
-        }
-        jsonPayload.put("redirect_uris", info.getParameter("callback_url"));
-        StringEntity entity = new StringEntity(jsonPayload.toString(), UTF_8);
-        entity.setContentType(JSON_CONTENT);
-        return entity;
     }
 
     private HttpDelete getDeleteApplicationDeleteMethod(String clientId) {
@@ -406,10 +415,43 @@ public class IsamKm extends AMDefaultKeyManagerImpl {
         return delete;
     }
 
+    private HttpGet getRetrieveApplicationGetMethod(String clientId) {
+        String url = clientRegisterEndpoint + "/" + schema + "?client_id=" + clientId;
+        HttpGet get = new HttpGet(url);
+        get.addHeader(AUTH_HEADER, getAuthorizationHeaderForAccessToken());
+        return get;
+    }
+
     private HttpPost getAccessTokenPostMethod(String clientId, String clientSecret) {
         HttpPost post = new HttpPost(tokenEndpoint);
         post.setEntity(getAccessTokenPayloadEntity(clientId, clientSecret));
         return post;
+    }
+
+    private HttpPost getIntrospectionPostMethod(String token) {
+        HttpPost post = new HttpPost(introspectionEndpoint);
+        post.setEntity(getIntrospectionPayloadEntity(token));
+        return post;
+    }
+
+    private StringEntity getCreateApplicationPayloadEntity(Application application, OAuthApplicationInfo info)
+            throws JSONException {
+        JSONObject jsonPayload = new JSONObject();
+        for (Map.Entry<String, String> entry : application.getApplicationAttributes().entrySet()) {
+            jsonPayload.put(entry.getKey(), entry.getValue());
+        }
+        JSONArray redirectsUris = new JSONArray();
+        String callbackUrls = (String) info.getParameter(Constants.CALLBACK_URL);
+        if (callbackUrls != null && !callbackUrls.isEmpty()) {
+            String[] urls = callbackUrls.split(",");
+            for (String url : urls) {
+                redirectsUris.put(url.trim());
+            }
+        }
+        jsonPayload.put(REDIRECT_URIS, redirectsUris);
+        StringEntity entity = new StringEntity(jsonPayload.toString(), UTF_8);
+        entity.setContentType(JSON_CONTENT);
+        return entity;
     }
 
     private UrlEncodedFormEntity getAccessTokenPayloadEntity(String clientId, String clientSecret) {
@@ -421,16 +463,10 @@ public class IsamKm extends AMDefaultKeyManagerImpl {
         return new UrlEncodedFormEntity(parametersBody, UTF_8);
     }
 
-    private HttpPost getIntrospectionPostMethod(String token) {
-        HttpPost post = new HttpPost(introspectionEndpoint);
-        post.setEntity(getIntrospectionPayloadEntity(token));
-        return post;
-    }
-
     private UrlEncodedFormEntity getIntrospectionPayloadEntity(String token) {
         List<BasicNameValuePair> parametersBody = new ArrayList<>(5);
-        parametersBody.add(new BasicNameValuePair(CLIENT_ID, clientId));
-        parametersBody.add(new BasicNameValuePair(CLIENT_SECRET, clientSecret));
+        parametersBody.add(clientIdPair);
+        parametersBody.add(clientSecretPair);
         parametersBody.add(new BasicNameValuePair(Constants.TOKEN, token));
         UrlEncodedFormEntity entity = new UrlEncodedFormEntity(parametersBody, UTF_8);
         entity.setContentType(JSON_CONTENT);
@@ -439,5 +475,40 @@ public class IsamKm extends AMDefaultKeyManagerImpl {
 
     private String getAuthorizationHeaderForAccessToken() {
         return Constants.BEARER + " " + accessToken;
+    }
+
+    private boolean isISAM(Application application) {
+        if (application != null) {
+            String idp = application.getApplicationAttributes().get("IDP");
+            return ISAM.equalsIgnoreCase(idp);
+        }
+        return false;
+    }
+
+    private String getIDPNameByClientId(String clientId) throws APIManagementException {
+        Connection connection = null;
+        PreparedStatement prepStmt = null;
+        ResultSet rs = null;
+        try {
+            connection = APIMgtDBUtil.getConnection();
+            String query =
+                    "SELECT ATTRIBUTE.VALUE " +
+                            "FROM AM_APPLICATION_KEY_MAPPING AM_APP_MAP, AM_APPLICATION_ATTRIBUTES ATTRIBUTE " +
+                            "WHERE AM_APP_MAP.CONSUMER_KEY = ? AND ATTRIBUTE.NAME = ? AND " +
+                            "AM_APP_MAP.APPLICATION_ID = ATTRIBUTE.APPLICATION_ID";
+            prepStmt = connection.prepareStatement(query);
+            prepStmt.setString(1, clientId);
+            prepStmt.setString(2, "IDP");
+            rs = prepStmt.executeQuery();
+            if (rs.next()) {
+                return rs.getString("VALUE");
+            }
+        } catch (SQLException e) {
+            throw new APIManagementException(
+                    "Error while obtaining details of the Application for client id " + clientId, e);
+        } finally {
+            APIMgtDBUtil.closeAllConnections(prepStmt, connection, rs);
+        }
+        return null;
     }
 }

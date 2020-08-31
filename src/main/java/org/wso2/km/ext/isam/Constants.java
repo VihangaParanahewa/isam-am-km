@@ -42,6 +42,10 @@ public final class Constants {
     public static final String TOKEN_ISSUED_TIME = "iat";
     public static final String SCOPE = "scope";
     public static final String USERNAME = "username";
+    public static final String REDIRECT_URIS = "redirect_uris";
+    public static final String TOKEN_SCOPE = "tokenScope";
+    public static final String GRANT_TYPES = "grant_types";
+    public static final String CALLBACK_URL = "callback_url";
 
     public static final String RESOURCE_CLIENT_REGISTRATION = "/register";
     public static final String RESOURCE_INTROSPECT = "/introspect";
@@ -56,5 +60,5 @@ public final class Constants {
     public static final int HTTP_UNAUTHORIZED = 401;
 
     public static final String ERROR_DESCRIPTION = "error_description";
-    public static final String ISAM = "isIsam";
+    public static final String ISAM = "isam";
 }
