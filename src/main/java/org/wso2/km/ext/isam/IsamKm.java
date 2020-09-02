@@ -27,6 +27,7 @@ import org.apache.http.client.methods.CloseableHttpResponse;
 import org.apache.http.client.methods.HttpDelete;
 import org.apache.http.client.methods.HttpGet;
 import org.apache.http.client.methods.HttpPost;
+import org.apache.http.client.methods.HttpPut;
 import org.apache.http.client.methods.HttpRequestBase;
 import org.apache.http.entity.StringEntity;
 import org.apache.http.impl.client.CloseableHttpClient;
@@ -73,10 +74,14 @@ import static org.wso2.km.ext.isam.Constants.TOKEN_SCOPE;
 
 public class IsamKm extends AMDefaultKeyManagerImpl {
 
+    private static final String EMPTY_STRING = "";
     private String clientId;
     private String clientSecret;
-    private int tokenLength;
+    private int tokenLength = 0;
+    boolean isTokenLength = false;
+    private String tokenPrefix = null;
     private String accessToken = null;
+    private String idpAttributeName;
     private BasicNameValuePair clientIdPair;
     private BasicNameValuePair clientSecretPair;
 
@@ -110,17 +115,30 @@ public class IsamKm extends AMDefaultKeyManagerImpl {
                 throw new APIManagementException(
                         "[ISAM KM] Unable to find the <ClientSecret> property under <IsamKm> configuration.");
             }
-            if (StringUtils.isNotEmpty(configuration.getParameter(Constants.CONFIG_TOKEN_LENGTH))) {
-                tokenLength = Integer.parseInt(configuration.getParameter(Constants.CONFIG_TOKEN_LENGTH));
-            } else {
-                throw new APIManagementException(
-                        "[ISAM KM] Unable to find the <TokenLength> property under <IsamKm> configuration.");
-            }
             if (StringUtils.isNotEmpty(configuration.getParameter(Constants.CONFIG_SCHEMA))) {
                 schema = configuration.getParameter(Constants.CONFIG_SCHEMA);
             } else {
                 throw new APIManagementException(
                         "[ISAM KM] Unable to find the <Schema> property under <IsamKm> configuration.");
+            }
+            if (StringUtils.isNotEmpty(configuration.getParameter(Constants.CONFIG_TOKEN_LENGTH))) {
+                tokenLength = Integer.parseInt(configuration.getParameter(Constants.CONFIG_TOKEN_LENGTH));
+                isTokenLength = true;
+            }
+            if (StringUtils.isNotEmpty(configuration.getParameter(Constants.CONFIG_TOKEN_PREFIX))) {
+                tokenPrefix = configuration.getParameter(Constants.CONFIG_TOKEN_PREFIX);
+            }
+            if (tokenLength == 0 && tokenPrefix == null) {
+                throw new APIManagementException(
+                        "[ISAM KM] Unable to find the <TokenLength> or <TokenPrefix> property under <IsamKm> " +
+                                "configuration.");
+            }
+            if (StringUtils.isNotEmpty(configuration.getParameter(Constants.CONFIG_ATTRIBUTE_NAME))) {
+                idpAttributeName = configuration.getParameter(Constants.CONFIG_ATTRIBUTE_NAME);
+            }else {
+                throw new APIManagementException(
+                        "[ISAM KM] Unable to find the <AttributeName> property under <IsamKm> configuration. " +
+                        "Please provide the same attribute name that used under ApplicationAttributes for IdP.");
             }
             clientIdPair = new BasicNameValuePair(CLIENT_ID, clientId);
             clientSecretPair = new BasicNameValuePair(CLIENT_SECRET, clientSecret);
@@ -167,6 +185,18 @@ public class IsamKm extends AMDefaultKeyManagerImpl {
     }
 
     @Override
+    public OAuthApplicationInfo updateApplication(OAuthAppRequest appInfoDTO) throws APIManagementException {
+        OAuthApplicationInfo info = appInfoDTO.getOAuthApplicationInfo();
+        Application application = getApplication(info);
+        if (isISAM(application)) {
+//            OAuthResponse oAuthResponse = updateApplication(application, info);
+            return new OAuthApplicationInfo();
+        } else {
+            return super.updateApplication(appInfoDTO);
+        }
+    }
+
+    @Override
     public OAuthApplicationInfo retrieveApplication(String consumerKey) throws APIManagementException {
         String idp = getIDPNameByClientId(consumerKey);
         if (ISAM.equalsIgnoreCase(idp)) {
@@ -207,8 +237,7 @@ public class IsamKm extends AMDefaultKeyManagerImpl {
 
     @Override
     public AccessTokenInfo getTokenMetaData(String accessToken) throws APIManagementException {
-        int length = accessToken.length();
-        if (length == tokenLength) {
+        if (isIsamToken(accessToken)) {
             try {
                 OAuthResponse res = sendIntrospection(accessToken);
                 if (res.getStatusCode() == HTTP_OK) {
@@ -217,20 +246,20 @@ public class IsamKm extends AMDefaultKeyManagerImpl {
                     boolean isActive = response.getBoolean(Constants.ACTIVE);
                     tokenInfo.setTokenValid(isActive);
                     if (isActive) {
-                        tokenInfo.setValidityPeriod(
-                                response.getLong(Constants.EXPIRY) - response.getLong(Constants.TOKEN_ISSUED_TIME));
+                        long expire = response.getLong(Constants.EXPIRY) * 1000;
+                        long issued = response.getLong(Constants.TOKEN_ISSUED_TIME) * 1000;
+                        tokenInfo.setValidityPeriod(expire - issued);
                         tokenInfo.setScope(response.getString(Constants.SCOPE).split(" "));
                         tokenInfo.setConsumerKey(response.getString(CLIENT_ID));
-                        tokenInfo.setIssuedTime(response.getLong(Constants.TOKEN_ISSUED_TIME));
+                        tokenInfo.setIssuedTime(issued);
                         tokenInfo.setEndUserName(response.getString(Constants.USERNAME));
 //                    tokenInfo.addParameter("param1", "para1value");
                     }
                     return tokenInfo;
                 } else {
                     throw new APIManagementException(
-                            "ISAM introspection endpoint respond with " + res.getStatusCode() + ", Error: " +
-                                    (res.getResponse().has(ERROR_DESCRIPTION) ?
-                                            res.getResponse().getString(ERROR_DESCRIPTION) : ""));
+                            "ISAM introspection endpoint respond with " + res.getStatusCode() +
+                                    ", Error: " + getErrorDescription(res));
                 }
             } catch (JSONException e) {
                 throw new APIManagementException(e);
@@ -319,8 +348,32 @@ public class IsamKm extends AMDefaultKeyManagerImpl {
             if (res.getStatusCode() != HTTP_OK) {
                 throw new APIManagementException(
                         "Could not create application successfully in the ISAM. ISAM respond with " +
-                                res.getStatusCode() + ", Error: " + (res.getResponse().has(ERROR_DESCRIPTION) ?
-                                res.getResponse().getString(ERROR_DESCRIPTION) : ""));
+                                res.getStatusCode() + ", Error: " + getErrorDescription(res));
+            }
+            return res;
+        } catch (JSONException e) {
+            throw new APIManagementException("Could not create the application.", e);
+        }
+    }
+
+    private OAuthResponse updateApplication(Application application, OAuthApplicationInfo info)
+            throws APIManagementException {
+        try {
+            if (accessToken == null) {
+                accessToken = getAccessToken(this.clientId, clientSecret).getString(Constants.ACCESS_TOKEN);
+            }
+            HttpPut put = getUpdateApplicationPutMethod(application, info);
+            OAuthResponse res = executeHttpMethod(put);
+            if (res.getStatusCode() == HTTP_UNAUTHORIZED || res.getStatusCode() == HTTP_FORBIDDEN) {
+                accessToken = getAccessToken(this.clientId, clientSecret).getString(Constants.ACCESS_TOKEN);
+                put.releaseConnection();
+                put.setHeader(AUTH_HEADER, getAuthorizationHeaderForAccessToken());
+                res = executeHttpMethod(put);
+            }
+            if (res.getStatusCode() != HTTP_OK) {
+                throw new APIManagementException(
+                        "Could not create application successfully in the ISAM. ISAM respond with " +
+                                res.getStatusCode() + ", Error: " + getErrorDescription(res));
             }
             return res;
         } catch (JSONException e) {
@@ -344,8 +397,7 @@ public class IsamKm extends AMDefaultKeyManagerImpl {
             if (!(response.getStatusCode() == HTTP_NO_CONTENT || response.getStatusCode() == HTTP_OK)) {
                 throw new APIManagementException(
                         "Could not delete the application from ISAM. ISAM respond with  " + response.getStatusCode() +
-                                ", Error: " + (response.getResponse().has(ERROR_DESCRIPTION) ?
-                                response.getResponse().getString(ERROR_DESCRIPTION) : ""));
+                                ", Error: " + getErrorDescription(response));
             }
         } catch (JSONException e) {
             throw new APIManagementException("Could not delete the application.", e);
@@ -373,8 +425,7 @@ public class IsamKm extends AMDefaultKeyManagerImpl {
             if (res.getStatusCode() != HTTP_OK) {
                 throw new APIManagementException(
                         "Could not retrieve application details from the ISAM. ISAM respond with " +
-                                res.getStatusCode() + ", Error: " + (res.getResponse().has(ERROR_DESCRIPTION) ?
-                                res.getResponse().getString(ERROR_DESCRIPTION) : ""));
+                                res.getStatusCode() + ", Error: " + getErrorDescription(res));
             }
             return res;
         } catch (JSONException e) {
@@ -391,8 +442,7 @@ public class IsamKm extends AMDefaultKeyManagerImpl {
             } else {
                 throw new APIManagementException(
                         "Could not retrieve access token for client: " + clientId + ". Endpoint respond with " +
-                                res.getStatusCode() + ", Error: " + (res.getResponse().has(ERROR_DESCRIPTION) ?
-                                res.getResponse().getString(ERROR_DESCRIPTION) : ""));
+                                res.getStatusCode() + ", Error: " + getErrorDescription(res));
             }
         } catch (JSONException e) {
             throw new APIManagementException("access_token entry not available in the response.", e);
@@ -406,6 +456,15 @@ public class IsamKm extends AMDefaultKeyManagerImpl {
         post.addHeader(AUTH_HEADER, getAuthorizationHeaderForAccessToken());
         post.setEntity(getCreateApplicationPayloadEntity(application, info));
         return post;
+    }
+
+    private HttpPut getUpdateApplicationPutMethod(Application application, OAuthApplicationInfo info)
+            throws JSONException {
+        String url = clientRegisterEndpoint + "/" + schema;
+        HttpPut put = new HttpPut(url);
+        put.addHeader(AUTH_HEADER, getAuthorizationHeaderForAccessToken());
+        put.setEntity(getCreateApplicationPayloadEntity(application, info));
+        return put;
     }
 
     private HttpDelete getDeleteApplicationDeleteMethod(String clientId) {
@@ -468,9 +527,7 @@ public class IsamKm extends AMDefaultKeyManagerImpl {
         parametersBody.add(clientIdPair);
         parametersBody.add(clientSecretPair);
         parametersBody.add(new BasicNameValuePair(Constants.TOKEN, token));
-        UrlEncodedFormEntity entity = new UrlEncodedFormEntity(parametersBody, UTF_8);
-        entity.setContentType(JSON_CONTENT);
-        return entity;
+        return new UrlEncodedFormEntity(parametersBody, UTF_8);
     }
 
     private String getAuthorizationHeaderForAccessToken() {
@@ -479,7 +536,7 @@ public class IsamKm extends AMDefaultKeyManagerImpl {
 
     private boolean isISAM(Application application) {
         if (application != null) {
-            String idp = application.getApplicationAttributes().get("IDP");
+            String idp = application.getApplicationAttributes().get(idpAttributeName);
             return ISAM.equalsIgnoreCase(idp);
         }
         return false;
@@ -498,7 +555,7 @@ public class IsamKm extends AMDefaultKeyManagerImpl {
                             "AM_APP_MAP.APPLICATION_ID = ATTRIBUTE.APPLICATION_ID";
             prepStmt = connection.prepareStatement(query);
             prepStmt.setString(1, clientId);
-            prepStmt.setString(2, "IDP");
+            prepStmt.setString(2, idpAttributeName);
             rs = prepStmt.executeQuery();
             if (rs.next()) {
                 return rs.getString("VALUE");
@@ -510,5 +567,16 @@ public class IsamKm extends AMDefaultKeyManagerImpl {
             APIMgtDBUtil.closeAllConnections(prepStmt, connection, rs);
         }
         return null;
+    }
+
+    private String getErrorDescription(OAuthResponse res) throws JSONException {
+        return res.getResponse().has(ERROR_DESCRIPTION) ? res.getResponse().getString(ERROR_DESCRIPTION) : EMPTY_STRING;
+    }
+
+    private boolean isIsamToken(String accessToken) {
+        if (isTokenLength) {
+            return tokenLength == accessToken.length();
+        }
+        return accessToken.startsWith(tokenPrefix);
     }
 }

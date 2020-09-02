@@ -24,9 +24,11 @@ public final class Constants {
 
     public static final String CONFIG_ISAM_ENDPOINT_URL = "IsamKm.ServerURL";
     public static final String CONFIG_TOKEN_LENGTH = "IsamKm.TokenLength";
+    public static final String CONFIG_TOKEN_PREFIX = "IsamKm.TokenPrefix";
     public static final String CONFIG_CLIENT_ID = "IsamKm.ClientId";
     public static final String CONFIG_CLIENT_SECRET = "IsamKm.ClientSecret";
     public static final String CONFIG_SCHEMA = "IsamKm.Schema";
+    public static final String CONFIG_ATTRIBUTE_NAME = "IsamKm.AttributeName";
 
     public static final String AUTH_HEADER = "Authorization";
     public static final String CLIENT_ID = "client_id";
