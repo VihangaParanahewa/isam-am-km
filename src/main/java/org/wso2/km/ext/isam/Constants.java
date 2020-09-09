@@ -44,6 +44,7 @@ public final class Constants {
     public static final String TOKEN_ISSUED_TIME = "iat";
     public static final String SCOPE = "scope";
     public static final String USERNAME = "username";
+    public static final String TOKEN_TYPE = "token_type";
     public static final String REDIRECT_URIS = "redirect_uris";
     public static final String TOKEN_SCOPE = "tokenScope";
     public static final String GRANT_TYPES = "grant_types";
