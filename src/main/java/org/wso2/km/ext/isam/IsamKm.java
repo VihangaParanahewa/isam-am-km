@@ -84,8 +84,11 @@ public class IsamKm extends AMDefaultKeyManagerImpl {
     private static final String EMPTY_STRING = "";
     private String clientId;
     private String clientSecret;
+    private String basicAuthToken;
+    private String basicAuthHeader;
     private int tokenLength = 0;
     boolean isTokenLength = false;
+    boolean isClientCredentials = false;
     private String tokenPrefix = null;
     private String accessToken = null;
     private String idpAttributeName;
@@ -95,7 +98,7 @@ public class IsamKm extends AMDefaultKeyManagerImpl {
     private String tokenEndpoint;
     private String introspectionEndpoint;
     private String clientRegisterEndpoint;
-    private String schema;
+    private String definition;
     private final List<String> introspectionDefaultResultKeys = new ArrayList<>();
 
 
@@ -113,21 +116,25 @@ public class IsamKm extends AMDefaultKeyManagerImpl {
             }
             if (StringUtils.isNotEmpty(configuration.getParameter(Constants.CONFIG_CLIENT_ID))) {
                 clientId = configuration.getParameter(Constants.CONFIG_CLIENT_ID);
-            } else {
-                throw new APIManagementException(
-                        "[ISAM KM] Unable to find the <ClientId> property under <IsamKm> configuration.");
+                isClientCredentials = true;
             }
             if (StringUtils.isNotEmpty(configuration.getParameter(Constants.CONFIG_CLIENT_SECRET))) {
                 clientSecret = configuration.getParameter(Constants.CONFIG_CLIENT_SECRET);
-            } else {
-                throw new APIManagementException(
-                        "[ISAM KM] Unable to find the <ClientSecret> property under <IsamKm> configuration.");
             }
-            if (StringUtils.isNotEmpty(configuration.getParameter(Constants.CONFIG_SCHEMA))) {
-                schema = configuration.getParameter(Constants.CONFIG_SCHEMA);
+            if (StringUtils.isNotEmpty(configuration.getParameter(Constants.CONFIG_BASIC_AUTH_TOKEN))) {
+                basicAuthToken = configuration.getParameter(Constants.CONFIG_BASIC_AUTH_TOKEN);
+                basicAuthHeader = Constants.BASIC + " " + basicAuthToken;
+            }
+            if (basicAuthToken == null && (clientId == null || clientSecret == null)) {
+                throw new APIManagementException(
+                        "[ISAM KM] Unable to find the <ClientId> and <ClientSecret> properties OR <BasicAuth> " +
+                                "property under <IsamKm> configuration.");
+            }
+            if (StringUtils.isNotEmpty(configuration.getParameter(Constants.CONFIG_DEFINITION))) {
+                definition = configuration.getParameter(Constants.CONFIG_DEFINITION);
             } else {
                 throw new APIManagementException(
-                        "[ISAM KM] Unable to find the <Schema> property under <IsamKm> configuration.");
+                        "[ISAM KM] Unable to find the <Definition> property under <IsamKm> configuration.");
             }
             if (StringUtils.isNotEmpty(configuration.getParameter(Constants.CONFIG_TOKEN_LENGTH))) {
                 tokenLength = Integer.parseInt(configuration.getParameter(Constants.CONFIG_TOKEN_LENGTH));
@@ -171,9 +178,8 @@ public class IsamKm extends AMDefaultKeyManagerImpl {
     @Override
     public OAuthApplicationInfo createApplication(OAuthAppRequest oauthAppRequest) throws APIManagementException {
         OAuthApplicationInfo info = oauthAppRequest.getOAuthApplicationInfo();
-        String idp = getIDPNameByClientId(info.getClientId());
-        if (ISAM.equalsIgnoreCase(idp)) {
-            Application application = getApplication(info);
+        Application application = getApplication(info);
+        if (isISAM(application)) {
             JSONObject res = createApplication(application, info).getResponse();
             try {
                 OAuthApplicationInfo applicationInfo = new OAuthApplicationInfo();
@@ -382,23 +388,10 @@ public class IsamKm extends AMDefaultKeyManagerImpl {
     private OAuthResponse createApplication(Application application, OAuthApplicationInfo info)
             throws APIManagementException {
         try {
-            if (accessToken == null) {
-                accessToken = getAccessToken(clientId, clientSecret).getString(Constants.ACCESS_TOKEN);
-            }
+            createAccessTokenIfNeed();
             HttpPost post = getCreateApplicationPostMethod(application, info);
-            OAuthResponse res = executeHttpMethod(post);
-            if (res.getStatusCode() == HTTP_UNAUTHORIZED || res.getStatusCode() == HTTP_FORBIDDEN) {
-                accessToken = getAccessToken(clientId, clientSecret).getString(Constants.ACCESS_TOKEN);
-                post.releaseConnection();
-                post.setHeader(AUTH_HEADER, getAuthorizationHeaderForAccessToken());
-                res = executeHttpMethod(post);
-            }
-            if (res.getStatusCode() != HTTP_OK) {
-                throw new APIManagementException(
-                        "Could not create application successfully in the ISAM. ISAM respond with " +
-                                res.getStatusCode() + ", Error: " + getErrorDescription(res));
-            }
-            return res;
+            String errorMsg = "Could not create application successfully in the ISAM. ISAM respond with ";
+            return getOAuthResponse(post, errorMsg, false);
         } catch (JSONException e) {
             throw new APIManagementException("Could not create the application.", e);
         }
@@ -407,23 +400,10 @@ public class IsamKm extends AMDefaultKeyManagerImpl {
     private OAuthResponse updateApplication(Application application, OAuthApplicationInfo info)
             throws APIManagementException {
         try {
-            if (accessToken == null) {
-                accessToken = getAccessToken(clientId, clientSecret).getString(Constants.ACCESS_TOKEN);
-            }
+            createAccessTokenIfNeed();
             HttpPut put = getUpdateApplicationPutMethod(application, info);
-            OAuthResponse res = executeHttpMethod(put);
-            if (res.getStatusCode() == HTTP_UNAUTHORIZED || res.getStatusCode() == HTTP_FORBIDDEN) {
-                accessToken = getAccessToken(clientId, clientSecret).getString(Constants.ACCESS_TOKEN);
-                put.releaseConnection();
-                put.setHeader(AUTH_HEADER, getAuthorizationHeaderForAccessToken());
-                res = executeHttpMethod(put);
-            }
-            if (res.getStatusCode() != HTTP_OK) {
-                throw new APIManagementException(
-                        "Could not create application successfully in the ISAM. ISAM respond with " +
-                                res.getStatusCode() + ", Error: " + getErrorDescription(res));
-            }
-            return res;
+            String errorMsg = "Could not update application successfully in the ISAM. ISAM respond with ";
+            return getOAuthResponse(put, errorMsg, false);
         } catch (JSONException e) {
             throw new APIManagementException("Could not create the application.", e);
         }
@@ -431,22 +411,10 @@ public class IsamKm extends AMDefaultKeyManagerImpl {
 
     private void deleteISAMApplication(String clientId) throws APIManagementException {
         try {
-            if (accessToken == null) {
-                accessToken = getAccessToken(this.clientId, clientSecret).getString(Constants.ACCESS_TOKEN);
-            }
+            createAccessTokenIfNeed();
             HttpDelete delete = getDeleteApplicationDeleteMethod(clientId);
-            OAuthResponse response = executeHttpMethod(delete);
-            if (response.getStatusCode() == HTTP_UNAUTHORIZED || response.getStatusCode() == HTTP_FORBIDDEN) {
-                accessToken = getAccessToken(this.clientId, clientSecret).getString(Constants.ACCESS_TOKEN);
-                delete.releaseConnection();
-                delete.setHeader(AUTH_HEADER, getAuthorizationHeaderForAccessToken());
-                response = executeHttpMethod(delete);
-            }
-            if (!(response.getStatusCode() == HTTP_NO_CONTENT || response.getStatusCode() == HTTP_OK)) {
-                throw new APIManagementException(
-                        "Could not delete the application from ISAM. ISAM respond with  " + response.getStatusCode() +
-                                ", Error: " + getErrorDescription(response));
-            }
+            String errorMsg = "Could not delete the application from ISAM. ISAM respond with  ";
+            getOAuthResponse(delete, errorMsg, true);
         } catch (JSONException e) {
             throw new APIManagementException("Could not delete the application.", e);
         }
@@ -459,26 +427,44 @@ public class IsamKm extends AMDefaultKeyManagerImpl {
 
     private OAuthResponse getISAMApplication(String clientId) throws APIManagementException {
         try {
-            if (accessToken == null) {
-                accessToken = getAccessToken(this.clientId, clientSecret).getString(Constants.ACCESS_TOKEN);
-            }
+            createAccessTokenIfNeed();
             HttpGet get = getRetrieveApplicationGetMethod(clientId);
-            OAuthResponse res = executeHttpMethod(get);
-            if (res.getStatusCode() == HTTP_UNAUTHORIZED || res.getStatusCode() == HTTP_FORBIDDEN) {
-                accessToken = getAccessToken(this.clientId, clientSecret).getString(Constants.ACCESS_TOKEN);
-                get.releaseConnection();
-                get.setHeader(AUTH_HEADER, getAuthorizationHeaderForAccessToken());
-                res = executeHttpMethod(get);
-            }
-            if (res.getStatusCode() != HTTP_OK) {
-                throw new APIManagementException(
-                        "Could not retrieve application details from the ISAM. ISAM respond with " +
-                                res.getStatusCode() + ", Error: " + getErrorDescription(res));
-            }
-            return res;
+            String errorMsg = "Could not retrieve application details from the ISAM. ISAM respond with ";
+            return getOAuthResponse(get, errorMsg, false);
         } catch (JSONException e) {
             throw new APIManagementException("Could not retrieve application details.", e);
         }
+    }
+
+    private void createAccessTokenIfNeed() throws JSONException, APIManagementException {
+        if (isClientCredentials && accessToken == null) {
+            accessToken = getAccessToken(clientId, clientSecret).getString(Constants.ACCESS_TOKEN);
+        }
+    }
+
+    private OAuthResponse getOAuthResponse(HttpRequestBase method, String errorMsg, boolean isDelete)
+            throws APIManagementException,
+                   JSONException {
+        OAuthResponse res = executeHttpMethod(method);
+        if (isClientCredentials &&
+                (res.getStatusCode() == HTTP_UNAUTHORIZED || res.getStatusCode() == HTTP_FORBIDDEN)) {
+            accessToken = getAccessToken(clientId, clientSecret).getString(Constants.ACCESS_TOKEN);
+            method.releaseConnection();
+            method.setHeader(AUTH_HEADER, getAuthorizationHeaderForAccessToken());
+            res = executeHttpMethod(method);
+        }
+        if (isDelete) {
+            if (!(res.getStatusCode() == HTTP_NO_CONTENT || res.getStatusCode() == HTTP_OK)) {
+                throw new APIManagementException(
+                        errorMsg + res.getStatusCode() + ", Error: " + getErrorDescription(res));
+            }
+        } else {
+            if (res.getStatusCode() != HTTP_OK) {
+                throw new APIManagementException(
+                        errorMsg + res.getStatusCode() + ", Error: " + getErrorDescription(res));
+            }
+        }
+        return res;
     }
 
     private JSONObject getAccessToken(String clientId, String clientSecret) throws APIManagementException {
@@ -499,34 +485,42 @@ public class IsamKm extends AMDefaultKeyManagerImpl {
 
     private HttpPost getCreateApplicationPostMethod(Application application, OAuthApplicationInfo info)
             throws JSONException {
-        String url = clientRegisterEndpoint + "/" + schema;
+        String url = clientRegisterEndpoint + "/" + definition;
         HttpPost post = new HttpPost(url);
-        post.addHeader(AUTH_HEADER, getAuthorizationHeaderForAccessToken());
+        setAuthHeader(post);
         post.setEntity(getCreateApplicationPayloadEntity(application, info));
         return post;
     }
 
     private HttpPut getUpdateApplicationPutMethod(Application application, OAuthApplicationInfo info)
             throws JSONException {
-        String url = clientRegisterEndpoint + "/" + schema + "?client_id=" + info.getClientId();
+        String url = clientRegisterEndpoint + "/" + definition + "?client_id=" + info.getClientId();
         HttpPut put = new HttpPut(url);
-        put.addHeader(AUTH_HEADER, getAuthorizationHeaderForAccessToken());
+        setAuthHeader(put);
         put.setEntity(getUpdateApplicationPayloadEntity(application, info));
         return put;
     }
 
     private HttpDelete getDeleteApplicationDeleteMethod(String clientId) {
-        String url = clientRegisterEndpoint + "/" + schema + "?client_id=" + clientId;
+        String url = clientRegisterEndpoint + "/" + definition + "?client_id=" + clientId;
         HttpDelete delete = new HttpDelete(url);
-        delete.addHeader(AUTH_HEADER, getAuthorizationHeaderForAccessToken());
+        setAuthHeader(delete);
         return delete;
     }
 
     private HttpGet getRetrieveApplicationGetMethod(String clientId) {
-        String url = clientRegisterEndpoint + "/" + schema + "?client_id=" + clientId;
+        String url = clientRegisterEndpoint + "/" + definition + "?client_id=" + clientId;
         HttpGet get = new HttpGet(url);
-        get.addHeader(AUTH_HEADER, getAuthorizationHeaderForAccessToken());
+        setAuthHeader(get);
         return get;
+    }
+
+    private void setAuthHeader(HttpRequestBase method) {
+        if (isClientCredentials) {
+            method.addHeader(AUTH_HEADER, getAuthorizationHeaderForAccessToken());
+        } else {
+            method.addHeader(AUTH_HEADER, getAuthorizationHeaderForBasicAuth());
+        }
     }
 
     private HttpPost getAccessTokenPostMethod(String clientId, String clientSecret) {
@@ -538,6 +532,9 @@ public class IsamKm extends AMDefaultKeyManagerImpl {
     private HttpPost getIntrospectionPostMethod(String token) {
         HttpPost post = new HttpPost(introspectionEndpoint);
         post.setEntity(getIntrospectionPayloadEntity(token));
+        if (!isClientCredentials) {
+            post.addHeader(AUTH_HEADER, getAuthorizationHeaderForBasicAuth());
+        }
         return post;
     }
 
@@ -594,14 +591,20 @@ public class IsamKm extends AMDefaultKeyManagerImpl {
 
     private UrlEncodedFormEntity getIntrospectionPayloadEntity(String token) {
         List<BasicNameValuePair> parametersBody = new ArrayList<>(5);
-        parametersBody.add(clientIdPair);
-        parametersBody.add(clientSecretPair);
+        if (isClientCredentials) {
+            parametersBody.add(clientIdPair);
+            parametersBody.add(clientSecretPair);
+        }
         parametersBody.add(new BasicNameValuePair(Constants.TOKEN, token));
         return new UrlEncodedFormEntity(parametersBody, UTF_8);
     }
 
     private String getAuthorizationHeaderForAccessToken() {
         return Constants.BEARER + " " + accessToken;
+    }
+
+    private String getAuthorizationHeaderForBasicAuth() {
+        return basicAuthHeader;
     }
 
     private String getIDPNameByClientId(String clientId) throws APIManagementException {
@@ -640,5 +643,13 @@ public class IsamKm extends AMDefaultKeyManagerImpl {
             return tokenLength == accessToken.length();
         }
         return accessToken.startsWith(tokenPrefix);
+    }
+
+    private boolean isISAM(Application application) {
+        if (application != null) {
+            String idp = application.getApplicationAttributes().get(idpAttributeName);
+            return ISAM.equalsIgnoreCase(idp);
+        }
+        return false;
     }
 }

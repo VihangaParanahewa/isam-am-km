@@ -27,7 +27,8 @@ public final class Constants {
     public static final String CONFIG_TOKEN_PREFIX = "IsamKm.TokenPrefix";
     public static final String CONFIG_CLIENT_ID = "IsamKm.ClientId";
     public static final String CONFIG_CLIENT_SECRET = "IsamKm.ClientSecret";
-    public static final String CONFIG_SCHEMA = "IsamKm.Schema";
+    public static final String CONFIG_BASIC_AUTH_TOKEN = "IsamKm.BasicAuth";
+    public static final String CONFIG_DEFINITION = "IsamKm.Definition";
     public static final String CONFIG_ATTRIBUTE_NAME = "IsamKm.AttributeName";
 
     public static final String AUTH_HEADER = "Authorization";
@@ -38,6 +39,7 @@ public final class Constants {
     public static final String ACCESS_TOKEN = "access_token";
     public static final String TOKEN_TYPE_HINT = "token_type_hint";
     public static final String BEARER = "Bearer";
+    public static final String BASIC = "Basic";
     public static final String TOKEN = "token";
     public static final String ACTIVE = "active";
     public static final String EXPIRY = "exp";
