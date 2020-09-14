@@ -160,9 +160,6 @@ public class IsamKm extends AMDefaultKeyManagerImpl {
         }
         super.loadConfiguration(configuration);
         populateDefaultIntrospectionProperties();
-        System.setProperty("org.apache.commons.logging.Log", "org.apache.commons.logging.impl.SimpleLog");
-        System.setProperty("org.apache.commons.logging.simplelog.showdatetime", "true");
-        System.setProperty("org.apache.commons.logging.simplelog.log.org.apache.http.wire", "DEBUG");
     }
 
     private void populateDefaultIntrospectionProperties() {
