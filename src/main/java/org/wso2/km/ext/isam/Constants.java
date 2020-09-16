@@ -31,7 +31,7 @@ public final class Constants {
     public static final String CONFIG_DEFINITION = "IsamKm.Definition";
     public static final String CONFIG_ATTRIBUTE_NAME = "IsamKm.AttributeName";
     public static final String MAX_CONN_PER_ROUTE = "IsamKm.MaxConnPerRoute";
-    public static final String MAX_CONN_TOTAL = "IsamKm.maxConnTotal";
+    public static final String MAX_CONN_TOTAL = "IsamKm.MaxConnTotal";
 
     public static final String AUTH_HEADER = "Authorization";
     public static final String CLIENT_ID = "client_id";
