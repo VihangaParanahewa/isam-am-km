@@ -46,6 +46,7 @@ import org.wso2.carbon.apimgt.api.model.KeyManagerConfiguration;
 import org.wso2.carbon.apimgt.api.model.OAuthAppRequest;
 import org.wso2.carbon.apimgt.api.model.OAuthApplicationInfo;
 import org.wso2.carbon.apimgt.impl.AMDefaultKeyManagerImpl;
+import org.wso2.carbon.apimgt.impl.APIConstants;
 import org.wso2.carbon.apimgt.impl.dao.ApiMgtDAO;
 import org.wso2.carbon.apimgt.impl.utils.APIMgtDBUtil;
 
@@ -76,7 +77,6 @@ import static org.wso2.km.ext.isam.Constants.JSON_CONTENT;
 import static org.wso2.km.ext.isam.Constants.REDIRECT_URIS;
 import static org.wso2.km.ext.isam.Constants.SCOPE;
 import static org.wso2.km.ext.isam.Constants.TOKEN_ISSUED_TIME;
-import static org.wso2.km.ext.isam.Constants.TOKEN_SCOPE;
 import static org.wso2.km.ext.isam.Constants.USERNAME;
 
 public class IsamKm extends AMDefaultKeyManagerImpl {
@@ -95,10 +95,10 @@ public class IsamKm extends AMDefaultKeyManagerImpl {
     private BasicNameValuePair clientIdPair;
     private BasicNameValuePair clientSecretPair;
 
+    private CloseableHttpClient client;
     private String tokenEndpoint;
     private String introspectionEndpoint;
     private String clientRegisterEndpoint;
-    private String definition;
     private final List<String> introspectionDefaultResultKeys = new ArrayList<>();
 
 
@@ -109,7 +109,6 @@ public class IsamKm extends AMDefaultKeyManagerImpl {
                 String isamEndpointUrl = configuration.getParameter(Constants.CONFIG_ISAM_ENDPOINT_URL);
                 tokenEndpoint = isamEndpointUrl + Constants.RESOURCE_TOKEN;
                 introspectionEndpoint = isamEndpointUrl + Constants.RESOURCE_INTROSPECT;
-                clientRegisterEndpoint = isamEndpointUrl + Constants.RESOURCE_CLIENT_REGISTRATION;
             } else {
                 throw new APIManagementException(
                         "[ISAM KM] Unable to find the <Url> property under <IsamKm> configuration.");
@@ -131,7 +130,9 @@ public class IsamKm extends AMDefaultKeyManagerImpl {
                                 "property under <IsamKm> configuration.");
             }
             if (StringUtils.isNotEmpty(configuration.getParameter(Constants.CONFIG_DEFINITION))) {
-                definition = configuration.getParameter(Constants.CONFIG_DEFINITION);
+                String definition = configuration.getParameter(Constants.CONFIG_DEFINITION);
+                String isamEndpointUrl = configuration.getParameter(Constants.CONFIG_ISAM_ENDPOINT_URL);
+                clientRegisterEndpoint = isamEndpointUrl + Constants.RESOURCE_CLIENT_REGISTRATION + "/" + definition;
             } else {
                 throw new APIManagementException(
                         "[ISAM KM] Unable to find the <Definition> property under <IsamKm> configuration.");
@@ -150,13 +151,24 @@ public class IsamKm extends AMDefaultKeyManagerImpl {
             }
             if (StringUtils.isNotEmpty(configuration.getParameter(Constants.CONFIG_ATTRIBUTE_NAME))) {
                 idpAttributeName = configuration.getParameter(Constants.CONFIG_ATTRIBUTE_NAME);
-            }else {
+            } else {
                 throw new APIManagementException(
                         "[ISAM KM] Unable to find the <AttributeName> property under <IsamKm> configuration. " +
-                        "Please provide the same attribute name that used under ApplicationAttributes for IdP.");
+                                "Please provide the same attribute name that used under ApplicationAttributes for IdP" +
+                                ".");
             }
             clientIdPair = new BasicNameValuePair(CLIENT_ID, clientId);
             clientSecretPair = new BasicNameValuePair(CLIENT_SECRET, clientSecret);
+            int maxConnPerRoute = 50;
+            int maxConnTotal = 100;
+            if (StringUtils.isNotEmpty(configuration.getParameter(Constants.MAX_CONN_PER_ROUTE))) {
+                maxConnPerRoute = Integer.parseInt(configuration.getParameter(Constants.MAX_CONN_PER_ROUTE));
+            }
+            if (StringUtils.isNotEmpty(configuration.getParameter(Constants.MAX_CONN_TOTAL))) {
+                maxConnTotal = Integer.parseInt(configuration.getParameter(Constants.MAX_CONN_TOTAL));
+            }
+            client = HttpClientBuilder.create().setMaxConnPerRoute(maxConnPerRoute).setMaxConnTotal(maxConnTotal)
+                    .build();
         }
         super.loadConfiguration(configuration);
         populateDefaultIntrospectionProperties();
@@ -186,14 +198,7 @@ public class IsamKm extends AMDefaultKeyManagerImpl {
                 applicationInfo.addParameter(ApplicationConstants.OAUTH_CLIENT_ID, res.getString(CLIENT_ID));
                 applicationInfo.setClientSecret(res.getString(CLIENT_SECRET));
                 applicationInfo.addParameter(ApplicationConstants.OAUTH_CLIENT_SECRET, res.getString(CLIENT_SECRET));
-                String tokenScope = (String) info.getParameter(TOKEN_SCOPE);
-                String[] tokenScopes = new String[]{tokenScope};
-                applicationInfo.addParameter(TOKEN_SCOPE, tokenScopes);
-                JSONObject jsonObject = new JSONObject(info.getJsonString());
-                if (jsonObject.has(GRANT_TYPES)) {
-                    applicationInfo.addParameter(GRANT_TYPES, ((String) jsonObject.get(GRANT_TYPES)).
-                            replace(",", " "));
-                }
+                applicationInfo.addParameter(GRANT_TYPES, APIConstants.GRANT_TYPE_CLIENT_CREDENTIALS);
                 if (info.getParameter(REDIRECT_URIS) != null) {
                     applicationInfo.setCallBackURL(String.valueOf(info.getParameter(REDIRECT_URIS)));
                 }
@@ -224,6 +229,7 @@ public class IsamKm extends AMDefaultKeyManagerImpl {
                 applicationInfo.addParameter(ApplicationConstants.OAUTH_CLIENT_ID, res.getString(CLIENT_ID));
                 applicationInfo.setClientSecret(res.getString(CLIENT_SECRET));
                 applicationInfo.addParameter(ApplicationConstants.OAUTH_CLIENT_SECRET, res.getString(CLIENT_SECRET));
+                applicationInfo.addParameter(GRANT_TYPES, APIConstants.GRANT_TYPE_CLIENT_CREDENTIALS);
                 if (info.getCallBackURL() != null) {
                     applicationInfo.setCallBackURL(info.getCallBackURL());
                 }
@@ -257,6 +263,7 @@ public class IsamKm extends AMDefaultKeyManagerImpl {
                     uris.deleteCharAt(uris.length() - 1);
                 }
                 applicationInfo.addParameter(REDIRECT_URIS, uris.toString());
+                applicationInfo.addParameter(GRANT_TYPES, APIConstants.GRANT_TYPE_CLIENT_CREDENTIALS);
                 return applicationInfo;
             } catch (JSONException e) {
                 throw new APIManagementException("Unable to retrieve information from the client details response.", e);
@@ -364,7 +371,6 @@ public class IsamKm extends AMDefaultKeyManagerImpl {
     }
 
     private OAuthResponse executeHttpMethod(HttpRequestBase method) throws APIManagementException {
-        CloseableHttpClient client = HttpClientBuilder.create().build();
         method.addHeader(Constants.HEADER_ACCEPT, JSON_CONTENT);
         try (CloseableHttpResponse response = client.execute(method)) {
             int statusCode = response.getStatusLine().getStatusCode();
@@ -446,7 +452,6 @@ public class IsamKm extends AMDefaultKeyManagerImpl {
         if (isClientCredentials &&
                 (res.getStatusCode() == HTTP_UNAUTHORIZED || res.getStatusCode() == HTTP_FORBIDDEN)) {
             accessToken = getAccessToken(clientId, clientSecret).getString(Constants.ACCESS_TOKEN);
-            method.releaseConnection();
             method.setHeader(AUTH_HEADER, getAuthorizationHeaderForAccessToken());
             res = executeHttpMethod(method);
         }
@@ -482,8 +487,7 @@ public class IsamKm extends AMDefaultKeyManagerImpl {
 
     private HttpPost getCreateApplicationPostMethod(Application application, OAuthApplicationInfo info)
             throws JSONException {
-        String url = clientRegisterEndpoint + "/" + definition;
-        HttpPost post = new HttpPost(url);
+        HttpPost post = new HttpPost(clientRegisterEndpoint);
         setAuthHeader(post);
         post.setEntity(getCreateApplicationPayloadEntity(application, info));
         return post;
@@ -491,7 +495,7 @@ public class IsamKm extends AMDefaultKeyManagerImpl {
 
     private HttpPut getUpdateApplicationPutMethod(Application application, OAuthApplicationInfo info)
             throws JSONException {
-        String url = clientRegisterEndpoint + "/" + definition + "?client_id=" + info.getClientId();
+        String url = clientRegisterEndpoint + "?client_id=" + info.getClientId();
         HttpPut put = new HttpPut(url);
         setAuthHeader(put);
         put.setEntity(getUpdateApplicationPayloadEntity(application, info));
@@ -499,14 +503,14 @@ public class IsamKm extends AMDefaultKeyManagerImpl {
     }
 
     private HttpDelete getDeleteApplicationDeleteMethod(String clientId) {
-        String url = clientRegisterEndpoint + "/" + definition + "?client_id=" + clientId;
+        String url = clientRegisterEndpoint + "?client_id=" + clientId;
         HttpDelete delete = new HttpDelete(url);
         setAuthHeader(delete);
         return delete;
     }
 
     private HttpGet getRetrieveApplicationGetMethod(String clientId) {
-        String url = clientRegisterEndpoint + "/" + definition + "?client_id=" + clientId;
+        String url = clientRegisterEndpoint + "?client_id=" + clientId;
         HttpGet get = new HttpGet(url);
         setAuthHeader(get);
         return get;
