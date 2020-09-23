@@ -89,6 +89,7 @@ public class IsamKm extends AMDefaultKeyManagerImpl {
     private int tokenLength = 0;
     boolean isTokenLength = false;
     boolean isClientCredentials = false;
+    boolean isBasicAuth = false;
     private String tokenPrefix = null;
     private String accessToken = null;
     private String idpAttributeName;
@@ -123,6 +124,7 @@ public class IsamKm extends AMDefaultKeyManagerImpl {
             if (StringUtils.isNotEmpty(configuration.getParameter(Constants.CONFIG_BASIC_AUTH_TOKEN))) {
                 basicAuthToken = configuration.getParameter(Constants.CONFIG_BASIC_AUTH_TOKEN);
                 basicAuthHeader = Constants.BASIC + " " + basicAuthToken;
+                isBasicAuth = true;
             }
             if (basicAuthToken == null && (clientId == null || clientSecret == null)) {
                 throw new APIManagementException(
@@ -168,10 +170,13 @@ public class IsamKm extends AMDefaultKeyManagerImpl {
                 maxConnTotal = Integer.parseInt(configuration.getParameter(Constants.MAX_CONN_TOTAL));
             }
             client = HttpClientBuilder.create().setMaxConnPerRoute(maxConnPerRoute).setMaxConnTotal(maxConnTotal)
-                    .build();
+                    .disableCookieManagement().build();
         }
         super.loadConfiguration(configuration);
         populateDefaultIntrospectionProperties();
+        System.setProperty("org.apache.commons.logging.Log", "org.apache.commons.logging.impl.SimpleLog");
+        System.setProperty("org.apache.commons.logging.simplelog.showdatetime", "true");
+        System.setProperty("org.apache.commons.logging.simplelog.log.org.apache.http.wire", "DEBUG");
     }
 
     private void populateDefaultIntrospectionProperties() {
@@ -202,7 +207,6 @@ public class IsamKm extends AMDefaultKeyManagerImpl {
                 if (info.getParameter(REDIRECT_URIS) != null) {
                     applicationInfo.setCallBackURL(String.valueOf(info.getParameter(REDIRECT_URIS)));
                 }
-                applicationInfo.addParameter(ISAM, true);
                 return applicationInfo;
             } catch (JSONException e) {
                 throw new APIManagementException("Unable to retrieve information from the client creation response.",
@@ -233,7 +237,6 @@ public class IsamKm extends AMDefaultKeyManagerImpl {
                 if (info.getCallBackURL() != null) {
                     applicationInfo.setCallBackURL(info.getCallBackURL());
                 }
-                applicationInfo.addParameter(ISAM, true);
                 return applicationInfo;
             } catch (JSONException e) {
                 throw new APIManagementException("Unable to retrieve information from the client update response.", e);
@@ -330,12 +333,8 @@ public class IsamKm extends AMDefaultKeyManagerImpl {
     @Override
     public AccessTokenInfo getNewApplicationAccessToken(AccessTokenRequest tokenRequest) throws APIManagementException {
         String clientId = tokenRequest.getClientId();
-        boolean isIsam = false;
-        Object isIsamQueryParam = tokenRequest.getRequestParam(ISAM);
-        if (isIsamQueryParam != null) {
-            isIsam = (Boolean) isIsamQueryParam;
-        }
-        if (isIsam) {
+        String idp = getIDPNameByClientId(clientId);
+        if (ISAM.equalsIgnoreCase(idp)) {
             String clientSecret = tokenRequest.getClientSecret();
             JSONObject accessToken = getAccessToken(clientId, clientSecret);
             AccessTokenInfo accessTokenInfo = new AccessTokenInfo();
@@ -344,23 +343,14 @@ public class IsamKm extends AMDefaultKeyManagerImpl {
                 accessTokenInfo.setConsumerKey(clientId);
                 accessTokenInfo.setConsumerSecret(clientSecret);
                 accessTokenInfo.setValidityPeriod(accessToken.getLong("expires_in"));
+                accessTokenInfo.setTokenValid(true);
+                accessTokenInfo.setTokenState("active");
             } catch (JSONException e) {
                 throw new APIManagementException("Unable to retrieve information from token response", e);
             }
             return accessTokenInfo;
         }
         return super.getNewApplicationAccessToken(tokenRequest);
-    }
-
-    @Override
-    public AccessTokenRequest buildAccessTokenRequestFromOAuthApp(OAuthApplicationInfo oAuthApplication,
-                                                                  AccessTokenRequest tokenRequest)
-            throws APIManagementException {
-        AccessTokenRequest req = super.buildAccessTokenRequestFromOAuthApp(oAuthApplication, tokenRequest);
-        if (Boolean.TRUE.equals(oAuthApplication.getParameter(ISAM))) {
-            req.addRequestParam(ISAM, true);
-        }
-        return req;
     }
 
     private Application getApplication(OAuthApplicationInfo oAuthApplicationInfo) throws APIManagementException {
@@ -440,7 +430,8 @@ public class IsamKm extends AMDefaultKeyManagerImpl {
     }
 
     private void createAccessTokenIfNeed() throws JSONException, APIManagementException {
-        if (isClientCredentials && accessToken == null) {
+        // Priority is given in an event of both basic auth and clientCredentials present situation.
+        if (!isBasicAuth && isClientCredentials && accessToken == null) {
             accessToken = getAccessToken(clientId, clientSecret).getString(Constants.ACCESS_TOKEN);
         }
     }
@@ -449,7 +440,7 @@ public class IsamKm extends AMDefaultKeyManagerImpl {
             throws APIManagementException,
                    JSONException {
         OAuthResponse res = executeHttpMethod(method);
-        if (isClientCredentials &&
+        if (!isBasicAuth && isClientCredentials &&
                 (res.getStatusCode() == HTTP_UNAUTHORIZED || res.getStatusCode() == HTTP_FORBIDDEN)) {
             accessToken = getAccessToken(clientId, clientSecret).getString(Constants.ACCESS_TOKEN);
             method.setHeader(AUTH_HEADER, getAuthorizationHeaderForAccessToken());
@@ -517,10 +508,10 @@ public class IsamKm extends AMDefaultKeyManagerImpl {
     }
 
     private void setAuthHeader(HttpRequestBase method) {
-        if (isClientCredentials) {
-            method.addHeader(AUTH_HEADER, getAuthorizationHeaderForAccessToken());
-        } else {
+        if (isBasicAuth) {
             method.addHeader(AUTH_HEADER, getAuthorizationHeaderForBasicAuth());
+        } else {
+            method.addHeader(AUTH_HEADER, getAuthorizationHeaderForAccessToken());
         }
     }
 
