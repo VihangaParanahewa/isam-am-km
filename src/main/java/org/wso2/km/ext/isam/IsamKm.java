@@ -73,6 +73,7 @@ import static org.wso2.km.ext.isam.Constants.HTTP_NO_CONTENT;
 import static org.wso2.km.ext.isam.Constants.HTTP_OK;
 import static org.wso2.km.ext.isam.Constants.HTTP_UNAUTHORIZED;
 import static org.wso2.km.ext.isam.Constants.ISAM;
+import static org.wso2.km.ext.isam.Constants.IS_PKCE;
 import static org.wso2.km.ext.isam.Constants.JSON_CONTENT;
 import static org.wso2.km.ext.isam.Constants.REDIRECT_URIS;
 import static org.wso2.km.ext.isam.Constants.SCOPE;
@@ -545,6 +546,7 @@ public class IsamKm extends AMDefaultKeyManagerImpl {
             }
         }
         jsonPayload.put(REDIRECT_URIS, redirectsUris);
+        jsonPayload.put(IS_PKCE, true);
         StringEntity entity = new StringEntity(jsonPayload.toString(), UTF_8);
         entity.setContentType(JSON_CONTENT);
         return entity;
@@ -567,6 +569,7 @@ public class IsamKm extends AMDefaultKeyManagerImpl {
         jsonPayload.put(CLIENT_ID, info.getClientId());
         jsonPayload.put(CLIENT_SECRET, info.getClientSecret());
         jsonPayload.put(REDIRECT_URIS, redirectsUris);
+        jsonPayload.put(IS_PKCE, true);
         StringEntity entity = new StringEntity(jsonPayload.toString(), UTF_8);
         entity.setContentType(JSON_CONTENT);
         return entity;

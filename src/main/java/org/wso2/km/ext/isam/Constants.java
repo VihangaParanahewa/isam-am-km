@@ -50,7 +50,7 @@ public final class Constants {
     public static final String USERNAME = "username";
     public static final String TOKEN_TYPE = "token_type";
     public static final String REDIRECT_URIS = "redirect_uris";
-    public static final String TOKEN_SCOPE = "tokenScope";
+    public static final String IS_PKCE = "isPkce";
     public static final String GRANT_TYPES = "grant_types";
     public static final String CALLBACK_URL = "callback_url";
 
