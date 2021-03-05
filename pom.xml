@@ -6,7 +6,7 @@
 
     <groupId>org.wso2.km.ext.isam</groupId>
     <artifactId>isam.auth</artifactId>
-    <version>1.0.0-SNAPSHOT</version>
+    <version>1.0.0</version>
 
     <name>APIM KM ISAM</name>
     <url>https://www.wso2.com</url>

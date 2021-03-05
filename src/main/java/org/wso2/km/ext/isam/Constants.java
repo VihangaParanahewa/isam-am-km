@@ -32,6 +32,7 @@ public final class Constants {
     public static final String CONFIG_ATTRIBUTE_NAME = "IsamKm.AttributeName";
     public static final String MAX_CONN_PER_ROUTE = "IsamKm.MaxConnPerRoute";
     public static final String MAX_CONN_TOTAL = "IsamKm.MaxConnTotal";
+    public static final String USER_STORE_PREFIX = "IsamKm.UserStorePrefix";
 
     public static final String AUTH_HEADER = "Authorization";
     public static final String CLIENT_ID = "client_id";
@@ -53,6 +54,7 @@ public final class Constants {
     public static final String IS_PKCE = "isPkce";
     public static final String GRANT_TYPES = "grant_types";
     public static final String CALLBACK_URL = "callback_url";
+    public static final String ISAM_SCOPES = "isam_scopes";
 
     public static final String RESOURCE_CLIENT_REGISTRATION = "/register";
     public static final String RESOURCE_INTROSPECT = "/introspect";

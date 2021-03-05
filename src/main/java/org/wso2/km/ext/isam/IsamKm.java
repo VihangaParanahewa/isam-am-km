@@ -46,7 +46,6 @@ import org.wso2.carbon.apimgt.api.model.KeyManagerConfiguration;
 import org.wso2.carbon.apimgt.api.model.OAuthAppRequest;
 import org.wso2.carbon.apimgt.api.model.OAuthApplicationInfo;
 import org.wso2.carbon.apimgt.impl.AMDefaultKeyManagerImpl;
-import org.wso2.carbon.apimgt.impl.APIConstants;
 import org.wso2.carbon.apimgt.impl.dao.ApiMgtDAO;
 import org.wso2.carbon.apimgt.impl.utils.APIMgtDBUtil;
 
@@ -67,12 +66,12 @@ import static org.wso2.km.ext.isam.Constants.CLIENT_ID;
 import static org.wso2.km.ext.isam.Constants.CLIENT_SECRET;
 import static org.wso2.km.ext.isam.Constants.ERROR_DESCRIPTION;
 import static org.wso2.km.ext.isam.Constants.EXPIRY;
-import static org.wso2.km.ext.isam.Constants.GRANT_TYPES;
 import static org.wso2.km.ext.isam.Constants.HTTP_FORBIDDEN;
 import static org.wso2.km.ext.isam.Constants.HTTP_NO_CONTENT;
 import static org.wso2.km.ext.isam.Constants.HTTP_OK;
 import static org.wso2.km.ext.isam.Constants.HTTP_UNAUTHORIZED;
 import static org.wso2.km.ext.isam.Constants.ISAM;
+import static org.wso2.km.ext.isam.Constants.ISAM_SCOPES;
 import static org.wso2.km.ext.isam.Constants.IS_PKCE;
 import static org.wso2.km.ext.isam.Constants.JSON_CONTENT;
 import static org.wso2.km.ext.isam.Constants.REDIRECT_URIS;
@@ -101,6 +100,7 @@ public class IsamKm extends AMDefaultKeyManagerImpl {
     private String tokenEndpoint;
     private String introspectionEndpoint;
     private String clientRegisterEndpoint;
+    private String userStorePrefix = null;
     private final List<String> introspectionDefaultResultKeys = new ArrayList<>();
 
 
@@ -170,6 +170,9 @@ public class IsamKm extends AMDefaultKeyManagerImpl {
             if (StringUtils.isNotEmpty(configuration.getParameter(Constants.MAX_CONN_TOTAL))) {
                 maxConnTotal = Integer.parseInt(configuration.getParameter(Constants.MAX_CONN_TOTAL));
             }
+            if (StringUtils.isNotEmpty(configuration.getParameter(Constants.USER_STORE_PREFIX))) {
+                userStorePrefix = configuration.getParameter(Constants.USER_STORE_PREFIX);
+            }
             client = HttpClientBuilder.create().setMaxConnPerRoute(maxConnPerRoute).setMaxConnTotal(maxConnTotal)
                     .disableCookieManagement().build();
         }
@@ -202,9 +205,12 @@ public class IsamKm extends AMDefaultKeyManagerImpl {
                 applicationInfo.addParameter(ApplicationConstants.OAUTH_CLIENT_NAME, info.getClientName());
                 applicationInfo.setClientId(res.getString(CLIENT_ID));
                 applicationInfo.addParameter(ApplicationConstants.OAUTH_CLIENT_ID, res.getString(CLIENT_ID));
-                applicationInfo.setClientSecret(res.getString(CLIENT_SECRET));
-                applicationInfo.addParameter(ApplicationConstants.OAUTH_CLIENT_SECRET, res.getString(CLIENT_SECRET));
-                applicationInfo.addParameter(GRANT_TYPES, APIConstants.GRANT_TYPE_CLIENT_CREDENTIALS);
+                if (res.has(CLIENT_SECRET)) {
+                    applicationInfo.setClientSecret(res.getString(CLIENT_SECRET));
+                    applicationInfo.addParameter(ApplicationConstants.OAUTH_CLIENT_SECRET,
+                                                 res.getString(CLIENT_SECRET));
+                }
+                //applicationInfo.addParameter(GRANT_TYPES, APIConstants.GRANT_TYPE_CLIENT_CREDENTIALS);
                 if (info.getParameter(REDIRECT_URIS) != null) {
                     applicationInfo.setCallBackURL(String.valueOf(info.getParameter(REDIRECT_URIS)));
                 }
@@ -225,16 +231,21 @@ public class IsamKm extends AMDefaultKeyManagerImpl {
         if (ISAM.equalsIgnoreCase(idp)) {
             try {
                 Application application = getApplication(info);
-                info.setClientSecret(getISAMApplication(info.getClientId()).getResponse().getString(CLIENT_SECRET));
+                if (getISAMApplication(info.getClientId()).getResponse().has(CLIENT_SECRET)) {
+                    info.setClientSecret(getISAMApplication(info.getClientId()).getResponse().getString(CLIENT_SECRET));
+                }
                 JSONObject res = updateApplication(application, info).getResponse();
                 OAuthApplicationInfo applicationInfo = new OAuthApplicationInfo();
                 applicationInfo.setClientName(info.getClientName());
                 applicationInfo.addParameter(ApplicationConstants.OAUTH_CLIENT_NAME, info.getClientName());
                 applicationInfo.setClientId(res.getString(CLIENT_ID));
                 applicationInfo.addParameter(ApplicationConstants.OAUTH_CLIENT_ID, res.getString(CLIENT_ID));
-                applicationInfo.setClientSecret(res.getString(CLIENT_SECRET));
-                applicationInfo.addParameter(ApplicationConstants.OAUTH_CLIENT_SECRET, res.getString(CLIENT_SECRET));
-                applicationInfo.addParameter(GRANT_TYPES, APIConstants.GRANT_TYPE_CLIENT_CREDENTIALS);
+                if (res.has(CLIENT_SECRET)) {
+                    applicationInfo.setClientSecret(res.getString(CLIENT_SECRET));
+                    applicationInfo.addParameter(ApplicationConstants.OAUTH_CLIENT_SECRET,
+                                                 res.getString(CLIENT_SECRET));
+                }
+                //applicationInfo.addParameter(GRANT_TYPES, APIConstants.GRANT_TYPE_CLIENT_CREDENTIALS);
                 if (info.getCallBackURL() != null) {
                     applicationInfo.setCallBackURL(info.getCallBackURL());
                 }
@@ -255,7 +266,9 @@ public class IsamKm extends AMDefaultKeyManagerImpl {
                 JSONObject res = getISAMApplication(consumerKey).getResponse();
                 OAuthApplicationInfo applicationInfo = new OAuthApplicationInfo();
                 applicationInfo.setClientId(res.getString(CLIENT_ID));
-                applicationInfo.setClientSecret(res.getString(CLIENT_SECRET));
+                if (res.has(CLIENT_SECRET)) {
+                    applicationInfo.setClientSecret(res.getString(CLIENT_SECRET));
+                }
                 applicationInfo.setCallBackURL(res.getJSONArray(REDIRECT_URIS).getString(0));
                 JSONArray redirectUris = res.getJSONArray(REDIRECT_URIS);
                 StringBuilder uris = new StringBuilder();
@@ -267,7 +280,7 @@ public class IsamKm extends AMDefaultKeyManagerImpl {
                     uris.deleteCharAt(uris.length() - 1);
                 }
                 applicationInfo.addParameter(REDIRECT_URIS, uris.toString());
-                applicationInfo.addParameter(GRANT_TYPES, APIConstants.GRANT_TYPE_CLIENT_CREDENTIALS);
+                //applicationInfo.addParameter(GRANT_TYPES, APIConstants.GRANT_TYPE_CLIENT_CREDENTIALS);
                 return applicationInfo;
             } catch (JSONException e) {
                 throw new APIManagementException("Unable to retrieve information from the client details response.", e);
@@ -302,9 +315,11 @@ public class IsamKm extends AMDefaultKeyManagerImpl {
                         long issued = response.getLong(TOKEN_ISSUED_TIME) * 1000;
                         tokenInfo.setValidityPeriod(expire - issued);
                         tokenInfo.setScope(response.getString(SCOPE).split(" "));
+                        tokenInfo.addParameter(ISAM_SCOPES, response.getString(SCOPE).split(" "));
                         tokenInfo.setConsumerKey(response.getString(CLIENT_ID));
                         tokenInfo.setIssuedTime(issued);
-                        tokenInfo.setEndUserName(response.getString(Constants.USERNAME));
+                        tokenInfo.setEndUserName((userStorePrefix == null) ? response.getString(USERNAME) :
+                                                         userStorePrefix + "/" + response.getString(USERNAME));
                         Iterator keys = response.keys();
                         while (keys.hasNext()) {
                             String id = (String) keys.next();
@@ -567,7 +582,9 @@ public class IsamKm extends AMDefaultKeyManagerImpl {
             }
         }
         jsonPayload.put(CLIENT_ID, info.getClientId());
-        jsonPayload.put(CLIENT_SECRET, info.getClientSecret());
+        if (info.getClientSecret() != null) {
+            jsonPayload.put(CLIENT_SECRET, info.getClientSecret());
+        }
         jsonPayload.put(REDIRECT_URIS, redirectsUris);
         jsonPayload.put(IS_PKCE, true);
         StringEntity entity = new StringEntity(jsonPayload.toString(), UTF_8);
