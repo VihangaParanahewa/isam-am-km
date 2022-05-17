@@ -21,6 +21,8 @@
 package org.wso2.km.ext.isam;
 
 import org.apache.commons.lang.StringUtils;
+import org.apache.commons.logging.Log;
+import org.apache.commons.logging.LogFactory;
 import org.apache.http.HttpEntity;
 import org.apache.http.client.entity.UrlEncodedFormEntity;
 import org.apache.http.client.methods.CloseableHttpResponse;
@@ -48,7 +50,9 @@ import org.wso2.carbon.apimgt.api.model.OAuthApplicationInfo;
 import org.wso2.carbon.apimgt.impl.AMDefaultKeyManagerImpl;
 import org.wso2.carbon.apimgt.impl.dao.ApiMgtDAO;
 import org.wso2.carbon.apimgt.impl.utils.APIMgtDBUtil;
+import org.wso2.km.ext.isam.caching.CacheProvider;
 
+import javax.cache.Cache;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
@@ -102,6 +106,8 @@ public class IsamKm extends AMDefaultKeyManagerImpl {
     private String clientRegisterEndpoint;
     private String userStorePrefix = null;
     private final List<String> introspectionDefaultResultKeys = new ArrayList<>();
+    private static final Log log = LogFactory.getLog(IsamKm.class);
+    private Cache introspectionCache = null;
 
 
     @Override
@@ -178,6 +184,8 @@ public class IsamKm extends AMDefaultKeyManagerImpl {
         }
         super.loadConfiguration(configuration);
         populateDefaultIntrospectionProperties();
+        introspectionCache = getIntrospectionCache();
+
         System.setProperty("org.apache.commons.logging.Log", "org.apache.commons.logging.impl.SimpleLog");
         System.setProperty("org.apache.commons.logging.simplelog.showdatetime", "true");
         System.setProperty("org.apache.commons.logging.simplelog.log.org.apache.http.wire", "DEBUG");
@@ -191,6 +199,11 @@ public class IsamKm extends AMDefaultKeyManagerImpl {
         introspectionDefaultResultKeys.add(TOKEN_ISSUED_TIME);
         introspectionDefaultResultKeys.add(CLIENT_ID);
         introspectionDefaultResultKeys.add(USERNAME);
+    }
+
+    private Cache getIntrospectionCache() {
+
+        return CacheProvider.createIntrospectionCache();
     }
 
     @Override
@@ -302,7 +315,11 @@ public class IsamKm extends AMDefaultKeyManagerImpl {
 
     @Override
     public AccessTokenInfo getTokenMetaData(String accessToken) throws APIManagementException {
-        if (isIsamToken(accessToken)) {
+        Object cachedAccessTokenInfo =  introspectionCache.get(accessToken);
+        if (cachedAccessTokenInfo != null) {
+            log.info(this.getClass().getName() + "Access token info retrieved from the introspection cache");
+            return (AccessTokenInfo) cachedAccessTokenInfo;
+        } else {
             try {
                 OAuthResponse res = sendIntrospection(accessToken);
                 if (res.getStatusCode() == HTTP_OK) {
@@ -319,7 +336,7 @@ public class IsamKm extends AMDefaultKeyManagerImpl {
                         tokenInfo.setConsumerKey(response.getString(CLIENT_ID));
                         tokenInfo.setIssuedTime(issued);
                         tokenInfo.setEndUserName((userStorePrefix == null) ? response.getString(USERNAME) :
-                                                         userStorePrefix + "/" + response.getString(USERNAME));
+                                userStorePrefix + "/" + response.getString(USERNAME));
                         Iterator keys = response.keys();
                         while (keys.hasNext()) {
                             String id = (String) keys.next();
@@ -327,7 +344,10 @@ public class IsamKm extends AMDefaultKeyManagerImpl {
                                 tokenInfo.addParameter(id, response.getString(id));
                             }
                         }
+                        introspectionCache.put(accessToken, tokenInfo);
+                        log.info(this.getClass().getName() + "Active access token info retrieved from the introspection call");
                     }
+                    log.info(this.getClass().getName() + "access token info retrieved from the introspection call");
                     return tokenInfo;
                 } else {
                     throw new APIManagementException(
@@ -337,8 +357,6 @@ public class IsamKm extends AMDefaultKeyManagerImpl {
             } catch (JSONException e) {
                 throw new APIManagementException(e);
             }
-        } else {
-            return super.getTokenMetaData(accessToken);
         }
     }
 

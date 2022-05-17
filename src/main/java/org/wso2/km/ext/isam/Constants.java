@@ -20,6 +20,11 @@
 
 package org.wso2.km.ext.isam;
 
+import org.wso2.carbon.apimgt.api.model.AccessTokenInfo;
+
+import java.util.HashMap;
+import java.util.Map;
+
 public final class Constants {
 
     public static final String CONFIG_ISAM_ENDPOINT_URL = "IsamKm.ServerURL";
@@ -70,4 +75,8 @@ public final class Constants {
 
     public static final String ERROR_DESCRIPTION = "error_description";
     public static final String ISAM = "isam";
+
+    public static final String INTROSPECT_CACHE_NAME = "IntrospectCache";
+    public static final String IS_AM_KM_CACHE_MANAGER = "IS_AM_KM_CACHE";
+    public static final long CACHE_EXPIRY = 600L;
 }
