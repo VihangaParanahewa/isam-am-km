@@ -20,11 +20,6 @@
 
 package org.wso2.km.ext.isam;
 
-import org.wso2.carbon.apimgt.api.model.AccessTokenInfo;
-
-import java.util.HashMap;
-import java.util.Map;
-
 public final class Constants {
 
     public static final String CONFIG_ISAM_ENDPOINT_URL = "IsamKm.ServerURL";
